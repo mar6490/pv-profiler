@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import logging
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -26,6 +28,88 @@ def _sdt_dir_attrs(dh: object) -> dict[str, str]:
             out[name] = str(value)
         elif isinstance(value, (pd.Series, pd.DataFrame, np.ndarray, list, tuple, dict)):
             out[name] = type(value).__name__
+    return out
+
+
+def _write_parquet(frame: pd.DataFrame, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    frame.to_parquet(path)
+
+
+def _shape_for(value: object) -> str | None:
+    if hasattr(value, "shape"):
+        return str(getattr(value, "shape"))
+    if isinstance(value, (list, tuple, dict)):
+        return str((len(value),))
+    return None
+
+
+def write_sdt_introspect(
+    dh: object,
+    out_dir: str | Path,
+    power_col: str,
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Write SDT introspection payload for debugging."""
+    keywords = [
+        "data_frame",
+        "raw_data_matrix",
+        "filled_data_matrix",
+        "processed",
+        "clean",
+        "shift",
+        "time",
+        "index",
+        "boolean_masks",
+        "daily_flags",
+    ]
+
+    out: dict[str, Any] = {
+        "power_col": power_col,
+        "data_frame_columns": [],
+        "data_frame_head": "",
+        "selected_attributes": [],
+        "report": None,
+        "extra": extra or {},
+    }
+
+    try:
+        df = getattr(dh, "data_frame", None)
+        if isinstance(df, pd.DataFrame):
+            out["data_frame_columns"] = list(df.columns)
+            out["data_frame_head"] = df.head(3).to_string()
+    except Exception as exc:  # pragma: no cover
+        out["data_frame_head"] = f"<unavailable: {exc}>"
+
+    selected_attributes: list[dict[str, Any]] = []
+    for name in dir(dh):
+        if name.startswith("_"):
+            continue
+        lname = name.lower()
+        if not any(k in lname for k in keywords):
+            continue
+        try:
+            value = getattr(dh, name)
+            selected_attributes.append(
+                {
+                    "name": name,
+                    "type": type(value).__name__,
+                    "shape": _shape_for(value),
+                }
+            )
+        except Exception as exc:  # pragma: no cover
+            selected_attributes.append({"name": name, "type": "<error>", "shape": str(exc)})
+
+    out["selected_attributes"] = selected_attributes
+
+    try:
+        out["report"] = dh.report(return_values=True)
+    except Exception as exc:  # pragma: no cover
+        out["report"] = {"error": str(exc)}
+
+    p = Path(out_dir) / "07_sdt_introspect.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(out, indent=2, sort_keys=True, default=str), encoding="utf-8")
     return out
 
 
@@ -81,6 +165,7 @@ def run_block_a(
     lat: float,
     lon: float,
     power_col: str = "ac_power",
+    out_dir: str | Path | None = None,
 ) -> dict[str, Any]:
     """Run Block A (A1/A2/A3) and return artifacts and summaries."""
     from solardatatools import DataHandler
@@ -94,8 +179,27 @@ def run_block_a(
 
     parsed = ac_power.rename("ac_power").to_frame()
 
+    if out_dir is not None:
+        out_path = Path(out_dir)
+        out_path.mkdir(parents=True, exist_ok=True)
+        _write_parquet(parsed, out_path / "01_parsed_tzaware.parquet")
+
     dh = DataHandler(parsed)
     dh.run_pipeline(power_col=power_col, fix_shifts=True, verbose=False)
+
+    report = None
+    if out_dir is not None:
+        write_sdt_introspect(dh, out_dir=out_dir, power_col=power_col, extra={"stage": "after_run_pipeline"})
+
+    clear_col = pd.Series(False, index=parsed.index, name="is_clear_time")
+    if hasattr(dh, "boolean_masks") and hasattr(dh.boolean_masks, "clear_times"):
+        dh.augment_data_frame(dh.boolean_masks.clear_times, "is_clear_time")
+    if hasattr(dh, "data_frame") and isinstance(dh.data_frame, pd.DataFrame) and "is_clear_time" in dh.data_frame.columns:
+        clear_col = dh.data_frame["is_clear_time"].reindex(parsed.index).fillna(False).astype(bool)
+        clear_col.name = "is_clear_time"
+
+    if out_dir is not None:
+        _write_parquet(clear_col.to_frame(), Path(out_dir) / "03_clear_times_mask.parquet")
 
     try:
         ac_power_clean, clean_source = extract_clean_power_series(dh, power_col=power_col)
@@ -103,19 +207,19 @@ def run_block_a(
     except Exception as exc:
         clean_source = "unresolved"
         clean_error = str(exc)
+        if out_dir is not None:
+            write_sdt_introspect(
+                dh,
+                out_dir=out_dir,
+                power_col=power_col,
+                extra={"stage": "extract_clean_power_series", "error": str(exc)},
+            )
         raise
     finally:
-        report = dh.report(return_values=True)
-
-    if hasattr(dh, "boolean_masks") and hasattr(dh.boolean_masks, "clear_times"):
-        dh.augment_data_frame(dh.boolean_masks.clear_times, "is_clear_time")
-
-    clear_col = None
-    if hasattr(dh, "data_frame") and isinstance(dh.data_frame, pd.DataFrame):
-        if "is_clear_time" in dh.data_frame.columns:
-            clear_col = dh.data_frame["is_clear_time"]
-    if clear_col is None:
-        clear_col = pd.Series(False, index=ac_power_clean.index)
+        try:
+            report = dh.report(return_values=True)
+        except Exception as exc:  # pragma: no cover
+            report = {"error": str(exc)}
 
     clear_col = clear_col.reindex(ac_power_clean.index).fillna(False).astype(bool)
     clear_col.name = "is_clear_time"
@@ -149,10 +253,12 @@ def run_block_a(
         "time_zone_correction": report.get("time zone correction") if isinstance(report, dict) else None,
     }
 
-    daily_flags = pd.DataFrame({
-        "date": clipping_day_share["date"].astype(str),
-        "clipping_day_share": clipping_day_share["clipping_day_share"],
-    })
+    daily_flags = pd.DataFrame(
+        {
+            "date": clipping_day_share["date"].astype(str),
+            "clipping_day_share": clipping_day_share["clipping_day_share"],
+        }
+    )
 
     introspect = {
         "data_frame_columns": list(getattr(dh, "data_frame", pd.DataFrame()).columns),
