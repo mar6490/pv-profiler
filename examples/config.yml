@@ -5,15 +5,42 @@ paths:
   output_root: outputs
   plants_csv: data/processed/plants.csv
 
+input:
+  timestamp_col: timestamp
+  power_col: P_AC  # set to P_AC for SonnJA file; use ac_power for generic files
+
 pipeline:
   fit_tau: 0.03
   clipping_threshold_day_share: 0.10
   clipping_fraction_day_median: 0.01
   clear_time_fraction_min: 0.005
 
-# run-single example:
-# pv-ident run-single -c examples/config.yml --system-id sys_demo --input examples/example_single.csv
-# run-wide example:
-# pv-ident run-wide -c examples/config.yml --input examples/example_wide.csv
-# run manifest example:
-# pv-ident run -c examples/config.yml --manifest examples/manifest.csv
+orientation:
+  az_min: 90
+  az_max: 270
+  coarse_tilt_step: 5
+  coarse_az_step: 10
+  refine_tilt_step: 1
+  refine_az_step: 2
+  transposition_model: perez  # or haydavies
+  loss_mode: median_daily_rmse  # or pooled_rmse
+  enable_two_plane: true
+  ew_improve_threshold: 0.10
+  top_n: 50
+
+capacity:
+  poa_threshold_wm2: 600.0
+
+shading:
+  r_max: 1.2
+  az_bin_deg: 5
+  el_bin_deg: 5
+  morning_sector_deg: [60, 150]
+  evening_sector_deg: [210, 300]
+
+# CLI examples:
+# pv-ident run-single --config examples/config.yml --system-id sys_demo --input-file examples/example_single.csv --lat 52.52 --lon 13.40
+# pv-ident run-single --config examples/config.yml --system-id sonnja --input-file data/sonnja_pv3_2015/power.csv --metadata-json data/sonnja_pv3_2015/metadata.json --output-dir outputs
+# pv-ident run-wide --config examples/config.yml --input examples/example_wide.csv
+# pv-ident run --config examples/config.yml --manifest examples/manifest.csv
+# pv-ident report --config examples/config.yml --output-root outputs

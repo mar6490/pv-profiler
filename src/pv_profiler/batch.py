@@ -8,8 +8,10 @@ from typing import Any
 
 import pandas as pd
 
+from pv_profiler.capacity import estimate_kWp_effective
 from pv_profiler.io import (
     read_manifest,
+    read_metadata_json,
     read_plants_metadata,
     read_single_plant,
     read_wide_plants,
@@ -18,7 +20,9 @@ from pv_profiler.io import (
     write_parquet,
 )
 from pv_profiler.normalization import compute_daily_peak_and_norm, compute_fit_mask
+from pv_profiler.orientation import fit_orientation
 from pv_profiler.sdt_pipeline import apply_exclusion_rules, run_block_a
+from pv_profiler.shading import compute_shading
 from pv_profiler.utils import ensure_dir, utc_timestamp_label
 
 LOGGER = logging.getLogger(__name__)
@@ -45,7 +49,7 @@ def process_single_system(
     lon: float,
     run_label: str,
 ) -> dict[str, Any]:
-    """Run full A-C pipeline for one system and write artifacts."""
+    """Run full A-E pipeline for one system and write artifacts."""
     out_dir = _system_output_dir(config["paths"]["output_root"], system_id=system_id, run_label=run_label)
     power = df["ac_power"].rename("ac_power")
 
@@ -82,7 +86,7 @@ def process_single_system(
     write_parquet(fit_mask.to_frame(), out_dir / "11_fit_mask.parquet")
     write_csv(daily_fit_fraction, out_dir / "12_daily_fit_fraction.csv")
 
-    merged_summary = {
+    merged_summary: dict[str, Any] = {
         "system_id": system_id,
         "run_label": run_label,
         "lat": lat,
@@ -93,6 +97,59 @@ def process_single_system(
         "fit_fraction_mean": float(daily_fit_fraction["daily_fit_fraction"].mean()) if not daily_fit_fraction.empty else 0.0,
     }
     merged_summary.update(apply_exclusion_rules(merged_summary, config=config))
+
+    excluded = bool(merged_summary.get("exclude_clipping") or merged_summary.get("exclude_low_clear"))
+    if excluded:
+        merged_summary["pipeline_de_skipped"] = True
+        write_json(merged_summary, out_dir / "summary.json")
+        LOGGER.info("Skipped D/E for excluded system_id=%s", system_id)
+        return merged_summary
+
+    orientation_artifacts = fit_orientation(
+        ac_power_clean=block_a["ac_power_clean"]["ac_power_clean"],
+        fit_mask=fit_mask,
+        lat=lat,
+        lon=lon,
+        config=config,
+    )
+
+    capacity_result = estimate_kWp_effective(
+        ac_power_clean=block_a["ac_power_clean"]["ac_power_clean"],
+        poa_cs=orientation_artifacts.poa_unshaded,
+        fit_mask=fit_mask,
+        poa_threshold_wm2=float(config.get("capacity", {}).get("poa_threshold_wm2", 600.0)),
+    )
+
+    orientation_result = dict(orientation_artifacts.result)
+    orientation_result.update(capacity_result)
+    write_json(orientation_result, out_dir / "13_orientation_result.json")
+    write_csv(orientation_artifacts.diagnostics, out_dir / "14_fit_diagnostics.csv")
+
+    shading_map, shading_metrics = compute_shading(
+        ac_power_clean=block_a["ac_power_clean"]["ac_power_clean"],
+        clear_times=block_a["clear_times"]["is_clear_time"],
+        poa_cs=orientation_artifacts.poa_unshaded,
+        kWp_effective=capacity_result["kWp_effective"],
+        lat=lat,
+        lon=lon,
+        config=config,
+        plot_path=out_dir / "shading_map.png",
+    )
+    write_parquet(shading_map, out_dir / "shading_map.parquet")
+    write_json(shading_metrics, out_dir / "shading_metrics.json")
+
+    merged_summary.update(
+        {
+            "pipeline_de_skipped": False,
+            "orientation_model_type": orientation_result.get("model_type"),
+            "orientation_tilt_deg": orientation_result.get("tilt_deg"),
+            "orientation_score_rmse": orientation_result.get("score_rmse"),
+            "kWp_effective": orientation_result.get("kWp_effective"),
+            "global_shading_index": shading_metrics.get("global_shading_index"),
+            "morning_shading_index": shading_metrics.get("morning_shading_index"),
+            "evening_shading_index": shading_metrics.get("evening_shading_index"),
+        }
+    )
 
     write_json(merged_summary, out_dir / "summary.json")
     LOGGER.info("Finished system_id=%s at %s", system_id, out_dir)
@@ -106,17 +163,33 @@ def run_single(
     config: dict[str, Any],
     lat: float | None,
     lon: float | None,
+    metadata_json: str | None = None,
+    output_root: str | None = None,
 ) -> dict[str, Any]:
+    if output_root:
+        config = {**config, "paths": {**config["paths"], "output_root": output_root}}
+
+    input_cfg = config.get("input", {})
+    timestamp_col = str(input_cfg.get("timestamp_col", "timestamp"))
+    power_col = str(input_cfg.get("power_col", "ac_power"))
+
     metadata = read_plants_metadata(config["paths"]["plants_csv"])
-    df = read_single_plant(input_path)
-    final_lat, final_lon = _lookup_location(system_id, metadata, lat, lon)
+    df = read_single_plant(input_path, timestamp_col=timestamp_col, power_col=power_col)
+
+    if metadata_json:
+        m = read_metadata_json(metadata_json)
+        final_lat, final_lon = float(m["lat"]), float(m["lon"])
+    else:
+        final_lat, final_lon = _lookup_location(system_id, metadata, lat, lon)
+
     run_label = utc_timestamp_label()
     return process_single_system(system_id, df, config, final_lat, final_lon, run_label)
 
 
 def run_wide(*, input_path: str, config: dict[str, Any], system_ids: list[str] | None = None) -> list[dict[str, Any]]:
     metadata = read_plants_metadata(config["paths"]["plants_csv"])
-    wide = read_wide_plants(input_path)
+    timestamp_col = str(config.get("input", {}).get("timestamp_col", "timestamp"))
+    wide = read_wide_plants(input_path, timestamp_col=timestamp_col)
     run_label = utc_timestamp_label()
 
     selected_columns = system_ids if system_ids else list(wide.columns)
@@ -132,6 +205,9 @@ def run_wide(*, input_path: str, config: dict[str, Any], system_ids: list[str] |
 
 def run_manifest(*, manifest_path: str, config: dict[str, Any]) -> list[dict[str, Any]]:
     metadata = read_plants_metadata(config["paths"]["plants_csv"])
+    timestamp_col = str(config.get("input", {}).get("timestamp_col", "timestamp"))
+    power_col = str(config.get("input", {}).get("power_col", "ac_power"))
+
     manifest = read_manifest(manifest_path)
     run_label = utc_timestamp_label()
     results: list[dict[str, Any]] = []
@@ -140,7 +216,7 @@ def run_manifest(*, manifest_path: str, config: dict[str, Any]) -> list[dict[str
         system_id = str(row["system_id"])
         if "path" not in row or pd.isna(row["path"]):
             raise ValueError("Manifest rows must include 'path' for run mode.")
-        df = read_single_plant(str(row["path"]))
+        df = read_single_plant(str(row["path"]), timestamp_col=timestamp_col, power_col=power_col)
         lat = float(row["lat"]) if "lat" in row and pd.notna(row["lat"]) else None
         lon = float(row["lon"]) if "lon" in row and pd.notna(row["lon"]) else None
         final_lat, final_lon = _lookup_location(system_id, metadata, lat, lon)

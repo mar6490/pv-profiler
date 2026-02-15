@@ -27,6 +27,8 @@ def cmd_run_single(args: argparse.Namespace) -> int:
         config=config,
         lat=args.lat,
         lon=args.lon,
+        metadata_json=args.metadata_json,
+        output_root=args.output_dir,
     )
     LOGGER.info("run-single completed for %s", result["system_id"])
     return 0
@@ -62,15 +64,17 @@ def cmd_report(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="pv-ident", description="PV identification pipeline (A-C)")
+    parser = argparse.ArgumentParser(prog="pv-ident", description="PV identification pipeline (A-E)")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     run_single_p = subparsers.add_parser("run-single", help="Process one system from long-format file")
     run_single_p.add_argument("--config", "-c", required=True)
     run_single_p.add_argument("--system-id", required=True)
-    run_single_p.add_argument("--input", required=True)
+    run_single_p.add_argument("--input", "--input-file", required=True, dest="input")
     run_single_p.add_argument("--lat", type=float)
     run_single_p.add_argument("--lon", type=float)
+    run_single_p.add_argument("--metadata-json", help="Path to metadata JSON with lat/lon")
+    run_single_p.add_argument("--output-dir", help="Override output root directory for this run")
     run_single_p.set_defaults(func=cmd_run_single)
 
     run_wide_p = subparsers.add_parser("run-wide", help="Process all systems from wide-format file")

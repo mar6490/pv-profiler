@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
@@ -27,7 +28,7 @@ def read_single_plant(path: str | Path, timestamp_col: str = "timestamp", power_
         raise ValueError(f"Missing timestamp column '{timestamp_col}'.")
     validate_power_series(df, power_col)
     index = parse_and_validate_timestamp_index(df[timestamp_col])
-    out = pd.DataFrame({power_col: pd.to_numeric(df[power_col], errors="coerce")}, index=index)
+    out = pd.DataFrame({"ac_power": pd.to_numeric(df[power_col], errors="coerce")}, index=index)
     out = out.sort_index()
     validate_regular_sampling(out.index)
     return out
@@ -62,6 +63,37 @@ def read_plants_metadata(path: str | Path) -> pd.DataFrame:
     if missing:
         raise ValueError(f"plants metadata missing columns: {sorted(missing)}")
     return meta
+
+
+def _find_first_number(payload: Any, keys: tuple[str, ...]) -> float | None:
+    if isinstance(payload, dict):
+        for key in keys:
+            if key in payload:
+                try:
+                    return float(payload[key])
+                except (TypeError, ValueError):
+                    pass
+        for value in payload.values():
+            found = _find_first_number(value, keys)
+            if found is not None:
+                return found
+    elif isinstance(payload, list):
+        for item in payload:
+            found = _find_first_number(item, keys)
+            if found is not None:
+                return found
+    return None
+
+
+def read_metadata_json(path: str | Path) -> dict[str, float | None]:
+    """Load lat/lon/altitude from metadata JSON."""
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    lat = _find_first_number(payload, ("lat", "latitude"))
+    lon = _find_first_number(payload, ("lon", "lng", "longitude"))
+    alt = _find_first_number(payload, ("altitude", "elevation", "alt"))
+    if lat is None or lon is None:
+        raise ValueError("metadata JSON must contain latitude and longitude fields.")
+    return {"lat": lat, "lon": lon, "altitude": alt}
 
 
 def write_parquet(df: pd.DataFrame | pd.Series, path: str | Path) -> None:

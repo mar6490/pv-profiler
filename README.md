@@ -21,15 +21,15 @@ pip install -e .
 - TZ-naive Eingaben werden deterministisch lokalisiert mit `tz_localize("Etc/GMT-1")`.
 - TZ-aware Eingaben sind nur erlaubt, wenn sie fixed offset `+01:00` sind.
 - `Europe/Berlin` (DST-aware) ist als Rechenzeitbasis nicht erlaubt.
-- Optionale Anzeige-Konvertierungen (z. B. `Europe/Berlin`) sind nur für Reporting/Visualisierung gedacht.
+- Optionale Anzeige-Konvertierungen sind nur für Export/Plots gedacht.
 
 ## Input Contract
 
 ### Modus 1: Single-Plant File
 
 - CSV/Parquet mit Spalten:
-  - `timestamp`
-  - `ac_power` (W, float, NaN erlaubt)
+  - `timestamp` (konfigurierbar via `input.timestamp_col`)
+  - `ac_power` oder z. B. `P_AC` (konfigurierbar via `input.power_col`)
 - Sampling-Regeln (strict):
   - exakt 5-Minuten-Raster
   - keine fehlenden Zeitpunkte
@@ -38,61 +38,56 @@ pip install -e .
 
 ### Modus 2: Multi-Plant Wide File
 
-- CSV/Parquet mit Spalten:
-  - `timestamp`
-  - weitere Spalten mit `system_id` als Spaltennamen
-- Gleiche Sampling- und Zeitregeln wie oben.
-- CLI splittet Wide-Format in einzelne Systeme.
+- CSV/Parquet mit `timestamp` + mehrere Systemspalten (`system_id` als Spaltenname)
+- gleiche Sampling-/Zeitregeln wie oben
 
 ### Standort/Metadaten
 
-- Datei: `data/processed/plants.csv`
-- Pflichtspalten: `system_id,country,plz,lat,lon,timezone`
-- Standort-Lookup: `system_id -> (lat, lon)`
-- Kein Geocoding / keine Online-APIs.
-- Bei `run-single`: wenn kein Standort in Metadaten vorhanden ist, müssen `--lat --lon` angegeben werden.
+- Primär: `data/processed/plants.csv` mit `system_id, lat, lon`
+- `run-single` unterstützt zusätzlich:
+  - `--metadata-json <path>` (liest lat/lon, optional altitude)
+  - fallback auf `--lat --lon`
 
-## Pipeline-Blocks
+## Pipeline
 
-### Block A (voll implementiert)
+### Block A–C (bestehend)
 
-- A1 Parsing/Timezone-Validierung -> `01_parsed_tzaware.parquet`
-- A2 SDT Onboarding
-  - `DataHandler.run_pipeline(power_col="ac_power", fix_shifts=True, verbose=False)`
-  - cleaned series extraction via `extract_clean_power_series(...)`
-  - clear-times mask -> `03_clear_times_mask.parquet`
-  - clipping mask (0.98 * Tagesmaximum während Daytime) -> `06_clipped_times_mask.parquet`
-  - daily flags -> `04_daily_flags.csv`
-  - summaries -> `05_clipping_summary.json`, `07_sdt_summary.json`, `07_sdt_introspect.json`
-- A3 Exclusion flags in `summary.json`
-  - `exclude_clipping`
-  - `exclude_low_clear`
-  - optional `suspect_large_shift`
+- A: SDT Onboarding, clear/clipping masks, A3 Exclusion-Flags
+- B: Normalisierung mit Q0.995
+- C: Fit-Maske (`fit_mask`)
 
-### Block B (voll implementiert)
+### Block D (voll implementiert)
 
-- `P_peak_day = quantile(0.995)` auf Daytime, ohne clipped points
-- `p_norm = ac_power_clean / P_peak_day`
+- Orientation Grid Search (tilt 0..60°) mit Single-Plane und optionalem East-West Two-Plane Modell
+- Single-Plane: Azimuth-Suche im Bereich `orientation.az_min..az_max`
+- Two-Plane: feste Azimuths E/W (90/270), Tilt-Suche + Modellvergleich über relative RMSE-Verbesserung
+- Loss-Modi: `median_daily_rmse` (default) oder `pooled_rmse`
 - Outputs:
-  - `08_daily_peak.csv`
-  - `09_p_norm.parquet`
+  - `13_orientation_result.json`
+  - `14_fit_diagnostics.csv`
 
-### Block C (voll implementiert)
+#### kWp_effective
 
-- `delta = abs(p_norm - p_norm.shift(1))`
-- `is_smooth = delta <= tau`
-- `fit_mask = is_clear_time & is_smooth & ~is_clipped_time`
-- Outputs:
-  - `11_fit_mask.parquet`
-  - `12_daily_fit_fraction.csv`
+- Nach Orientierungswahl wird `kWp_effective` geschätzt:
+  - `median(ac_power_clean / (POA_cs / 1000))`
+  - nur für `fit_mask` und `POA_cs > 600 W/m²`
+- Felder werden in `13_orientation_result.json` gespeichert.
 
-### Block D/E (coming next)
+### Block E (voll implementiert)
 
-- `orientation.py`, `capacity.py`, `shading.py` sind als dokumentierte Platzhalter vorhanden und werfen aktuell `NotImplementedError`.
+- Residual: `r = ac_power_clean / p_hat_unshaded_scaled`
+- Filter für Residuale: clear-times, `POA_cs > 200`, `r > 0`
+- 2D-Binning (Solar-Azimuth/Solar-Elevation) -> `shading_map.parquet`
+- Indizes:
+  - `global_shading_index`
+  - `morning_shading_index` (Sektor default 60..150°)
+  - `evening_shading_index` (Sektor default 210..300°)
+- Plot:
+  - `shading_map.png`
+- Metriken:
+  - `shading_metrics.json`
 
 ## Output-Layout
-
-Pro Anlage:
 
 ```text
 outputs/<system_id>/<YYYYMMDD_HHMMSS>/
@@ -108,6 +103,11 @@ outputs/<system_id>/<YYYYMMDD_HHMMSS>/
   09_p_norm.parquet
   11_fit_mask.parquet
   12_daily_fit_fraction.csv
+  13_orientation_result.json
+  14_fit_diagnostics.csv
+  shading_map.parquet
+  shading_metrics.json
+  shading_map.png
   summary.json
 ```
 
@@ -121,8 +121,8 @@ outputs/reports/report_summary.json
 ## CLI
 
 ```bash
-pv-ident run-single -c examples/config.yml --system-id sys_demo --input examples/example_single.csv
-pv-ident run-wide -c examples/config.yml --input examples/example_wide.csv
-pv-ident run -c examples/config.yml --manifest examples/manifest.csv
-pv-ident report -c examples/config.yml --output-root outputs
+pv-ident run-single --input-file <path> --metadata-json data/sonnja_pv3_2015/metadata.json --config examples/config.yml --output-dir outputs --system-id sonnja
+pv-ident run-wide --config examples/config.yml --input examples/example_wide.csv
+pv-ident run --config examples/config.yml --manifest examples/manifest.csv
+pv-ident report --config examples/config.yml --output-root outputs
 ```

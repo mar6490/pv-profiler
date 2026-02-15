@@ -12,11 +12,38 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "output_root": "outputs",
         "plants_csv": "data/processed/plants.csv",
     },
+    "input": {
+        "timestamp_col": "timestamp",
+        "power_col": "ac_power",
+    },
     "pipeline": {
         "fit_tau": 0.03,
         "clipping_threshold_day_share": 0.10,
         "clipping_fraction_day_median": 0.01,
         "clear_time_fraction_min": 0.005,
+    },
+    "orientation": {
+        "az_min": 90,
+        "az_max": 270,
+        "coarse_tilt_step": 5,
+        "coarse_az_step": 10,
+        "refine_tilt_step": 1,
+        "refine_az_step": 2,
+        "transposition_model": "perez",
+        "loss_mode": "median_daily_rmse",
+        "enable_two_plane": True,
+        "ew_improve_threshold": 0.10,
+        "top_n": 50,
+    },
+    "capacity": {
+        "poa_threshold_wm2": 600.0,
+    },
+    "shading": {
+        "r_max": 1.2,
+        "az_bin_deg": 5,
+        "el_bin_deg": 5,
+        "morning_sector_deg": [60, 150],
+        "evening_sector_deg": [210, 300],
     },
 }
 
