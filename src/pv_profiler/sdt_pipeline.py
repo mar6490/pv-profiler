@@ -71,6 +71,8 @@ def write_sdt_introspect(
         "selected_attributes": [],
         "report": None,
         "extra": extra or {},
+        "clean_power_source": (extra or {}).get("clean_power_source"),
+        "clear_times_source": (extra or {}).get("clear_times_source"),
     }
 
     try:
@@ -113,38 +115,127 @@ def write_sdt_introspect(
     return out
 
 
+def _reconstruct_series_from_matrix(dh: object, matrix_attr: str, power_col: str) -> tuple[pd.Series, str] | None:
+    matrix = getattr(dh, matrix_attr, None)
+    df = getattr(dh, "data_frame", None)
+    day_index = getattr(dh, "day_index", None)
+
+    if not isinstance(matrix, np.ndarray) or not isinstance(df, pd.DataFrame) or not isinstance(df.index, pd.DatetimeIndex):
+        return None
+    if "seq_index" not in df.columns or not isinstance(day_index, pd.DatetimeIndex):
+        return None
+
+    day_lookup = {pd.Timestamp(d).normalize(): i for i, d in enumerate(day_index)}
+
+    values = []
+    for ts, seq in zip(df.index, df["seq_index"], strict=False):
+        day_pos = day_lookup.get(pd.Timestamp(ts).normalize())
+        if day_pos is None:
+            values.append(np.nan)
+            continue
+        row = int(seq)
+        if row < 0 or day_pos < 0 or row >= matrix.shape[0] or day_pos >= matrix.shape[1]:
+            values.append(np.nan)
+            continue
+        values.append(matrix[row, day_pos])
+
+    series = pd.Series(values, index=df.index, name="ac_power_clean")
+    if series.index.tz is None:
+        series.index = series.index.tz_localize(INTERNAL_TZ)
+    else:
+        series.index = series.index.tz_convert(INTERNAL_TZ)
+    return series, f"dh.{matrix_attr}+dh.day_index+dh.data_frame.seq_index"
+
+
 def extract_clean_power_series(dh: object, power_col: str = "ac_power") -> tuple[pd.Series, str]:
-    """Extract SDT shift-corrected clean power series without silent fallback."""
-    candidates = [
-        "clean_power",
-        "clean_power_series",
-        "power_clean",
-        "power_signals_d",
-        "filled_data_matrix",
-    ]
+    """Extract SDT shift-corrected clean power series deterministically."""
+    df = getattr(dh, "data_frame", None)
+    if isinstance(df, pd.DataFrame) and isinstance(df.index, pd.DatetimeIndex):
+        scored_cols: list[tuple[int, str]] = []
+        for col in df.columns:
+            lname = str(col).lower()
+            score = 0
+            if str(col) == power_col:
+                score += 10
+            if power_col.lower() in lname or "power" in lname:
+                score += 3
+            if any(k in lname for k in ("clean", "filled", "processed", "fixed", "shift")):
+                score += 5
+            if score > 0 and pd.api.types.is_numeric_dtype(df[col]):
+                scored_cols.append((score, str(col)))
 
-    for attr in candidates:
-        if not hasattr(dh, attr):
-            continue
-        raw = getattr(dh, attr)
-        if isinstance(raw, pd.Series):
-            series = raw.copy()
-        elif isinstance(raw, pd.DataFrame) and power_col in raw.columns:
-            series = raw[power_col].copy()
-        else:
-            continue
+        if scored_cols:
+            scored_cols.sort(key=lambda x: (-x[0], x[1]))
+            selected_col = scored_cols[0][1]
+            series = pd.to_numeric(df[selected_col], errors="coerce").rename("ac_power_clean")
+            if series.index.tz is None:
+                series.index = series.index.tz_localize(INTERNAL_TZ)
+            else:
+                series.index = series.index.tz_convert(INTERNAL_TZ)
+            return series, f"dh.data_frame[{selected_col!r}]"
 
-        if not isinstance(series.index, pd.DatetimeIndex):
-            continue
-        if series.index.tz is None:
-            series.index = series.index.tz_localize(INTERNAL_TZ)
-        else:
-            series.index = series.index.tz_convert(INTERNAL_TZ)
-        return series.rename("ac_power_clean"), f"dh.{attr}"
+    for matrix_attr in ("filled_data_matrix", "processed_data_matrix"):
+        reconstructed = _reconstruct_series_from_matrix(dh, matrix_attr=matrix_attr, power_col=power_col)
+        if reconstructed is not None:
+            return reconstructed
 
     raise RuntimeError(
         "Unable to identify SDT cleaned shift-corrected power series through public attributes. "
-        "See 07_sdt_introspect.json for available attributes."
+        "Expected one of: numeric post-pipeline power column in dh.data_frame OR "
+        "reconstructable filled/processed matrix with day_index+seq_index."
+    )
+
+
+def _ensure_clear_times(dh: object) -> tuple[pd.Series, str]:
+    """Compute and retrieve clear-times mask using SDT v2.1.x public API."""
+    attempted: list[str] = []
+
+    def _from_boolean_masks() -> tuple[pd.Series, str] | None:
+        bm = getattr(dh, "boolean_masks", None)
+        if bm is None:
+            return None
+        for attr in ("clear_times", "clear_time", "clear"):
+            if hasattr(bm, attr):
+                values = getattr(bm, attr)
+                if values is not None:
+                    if isinstance(values, pd.Series):
+                        series = values.astype(bool)
+                    else:
+                        series = pd.Series(np.asarray(values).astype(bool), index=getattr(dh, "data_frame").index)
+                    return series, f"dh.boolean_masks.{attr}"
+        return None
+
+    found = _from_boolean_masks()
+    if found is not None:
+        return found
+
+    for method_name in (
+        "make_filled_data_matrix",
+        "find_clipped_times",
+        "get_daily_flags",
+        "calculate_scsf_performance_index",
+    ):
+        method = getattr(dh, method_name, None)
+        if callable(method):
+            attempted.append(method_name)
+            try:
+                method()
+            except TypeError:
+                try:
+                    method(return_values=True)
+                except Exception:
+                    pass
+            except Exception:
+                pass
+            found = _from_boolean_masks()
+            if found is not None:
+                return found
+
+    bm = getattr(dh, "boolean_masks", None)
+    bm_attrs = [a for a in dir(bm) if not a.startswith("_")] if bm is not None else []
+    raise RuntimeError(
+        "Could not compute clear-times mask via SDT public API. "
+        f"Attempted methods={attempted}, boolean_masks_attrs={bm_attrs}"
     )
 
 
@@ -187,32 +278,43 @@ def run_block_a(
     dh = DataHandler(parsed)
     dh.run_pipeline(power_col=power_col, fix_shifts=True, verbose=False)
 
-    report = None
+    clear_times_source = None
+    clean_source = "unresolved"
     if out_dir is not None:
-        write_sdt_introspect(dh, out_dir=out_dir, power_col=power_col, extra={"stage": "after_run_pipeline"})
+        write_sdt_introspect(
+            dh,
+            out_dir=out_dir,
+            power_col=power_col,
+            extra={"stage": "after_run_pipeline", "clean_power_source": clean_source, "clear_times_source": clear_times_source},
+        )
 
-    clear_col = pd.Series(False, index=parsed.index, name="is_clear_time")
-    if hasattr(dh, "boolean_masks") and hasattr(dh.boolean_masks, "clear_times"):
-        dh.augment_data_frame(dh.boolean_masks.clear_times, "is_clear_time")
-    if hasattr(dh, "data_frame") and isinstance(dh.data_frame, pd.DataFrame) and "is_clear_time" in dh.data_frame.columns:
-        clear_col = dh.data_frame["is_clear_time"].reindex(parsed.index).fillna(False).astype(bool)
-        clear_col.name = "is_clear_time"
+    clear_col, clear_times_source = _ensure_clear_times(dh)
+    if hasattr(dh, "augment_data_frame") and callable(getattr(dh, "augment_data_frame")):
+        dh.augment_data_frame(clear_col, "is_clear_time")
+
+    clear_col = clear_col.reindex(parsed.index).fillna(False).astype(bool)
+    clear_col.name = "is_clear_time"
 
     if out_dir is not None:
         _write_parquet(clear_col.to_frame(), Path(out_dir) / "03_clear_times_mask.parquet")
 
+    report = None
     try:
         ac_power_clean, clean_source = extract_clean_power_series(dh, power_col=power_col)
         clean_error = None
     except Exception as exc:
-        clean_source = "unresolved"
         clean_error = str(exc)
         if out_dir is not None:
             write_sdt_introspect(
                 dh,
                 out_dir=out_dir,
                 power_col=power_col,
-                extra={"stage": "extract_clean_power_series", "error": str(exc)},
+                extra={
+                    "stage": "extract_clean_power_series",
+                    "error": str(exc),
+                    "clean_power_source": clean_source,
+                    "clear_times_source": clear_times_source,
+                },
             )
         raise
     finally:
@@ -266,6 +368,7 @@ def run_block_a(
         "report": report if isinstance(report, dict) else {"raw": str(report)},
         "clean_power_source": clean_source,
         "clean_power_error": clean_error,
+        "clear_times_source": clear_times_source,
     }
 
     return {
