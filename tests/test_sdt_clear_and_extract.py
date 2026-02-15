@@ -3,54 +3,26 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from pv_profiler.sdt_pipeline import _ensure_clear_times, extract_clean_power_series
+from pv_profiler.sdt_pipeline import apply_exclusion_rules, extract_clean_power_series, get_clear_day_flags
 
 
-class FakeBooleanMasks:
-    def __init__(self, values) -> None:
-        self.clear_times = values
+class FakeDailyFlags:
+    def __init__(self, clear_days: np.ndarray) -> None:
+        self.clear_days = clear_days
 
 
-class FakeHandlerClear:
-    def __init__(self, idx: pd.DatetimeIndex) -> None:
-        self.data_frame = pd.DataFrame({"ac_power": [0.0] * len(idx), "seq_index": np.arange(len(idx))}, index=idx)
-        self.boolean_masks = FakeBooleanMasks(pd.Series([True] * len(idx), index=idx))
-
-    def augment_data_frame(self, values, name: str):
-        self.data_frame[name] = pd.Series(values, index=self.data_frame.index).values
+class FakeHandlerDailyFlags:
+    def __init__(self, n_days: int) -> None:
+        self.filled_data_matrix = np.zeros((3, n_days), dtype=float)
+        self.daily_flags = FakeDailyFlags(np.array([True, False], dtype=bool))
 
 
-class FakeHandlerClearNumpy:
-    def __init__(self, idx: pd.DatetimeIndex) -> None:
-        self.data_frame = pd.DataFrame({"ac_power": [0.0] * len(idx), "seq_index": np.arange(len(idx))}, index=idx)
-        self.boolean_masks = FakeBooleanMasks(np.array([True] * len(idx), dtype=bool))
-
-    def augment_data_frame(self, values, name: str):
-        self.data_frame[name] = np.asarray(values)
-
-
-class FakeHandlerClearViaMethod:
-    def __init__(self, idx: pd.DatetimeIndex) -> None:
-        self.data_frame = pd.DataFrame({"ac_power": [0.0] * len(idx), "seq_index": np.arange(len(idx))}, index=idx)
-        self.boolean_masks = FakeBooleanMasks(None)
-
-    def make_filled_data_matrix(self):
-        return None
-
-    def find_clipped_times(self):
-        return None
+class FakeHandlerGetDailyFlags:
+    def __init__(self, n_days: int) -> None:
+        self.filled_data_matrix = np.zeros((3, n_days), dtype=float)
 
     def get_daily_flags(self):
-        return None
-
-    def calculate_scsf_performance_index(self):
-        return None
-
-    def find_clear_times(self):
-        self.boolean_masks.clear_times = pd.Series([True] * len(self.data_frame), index=self.data_frame.index)
-
-    def augment_data_frame(self, values, name: str):
-        self.data_frame[name] = pd.Series(values, index=self.data_frame.index).values
+        return {"clear_day": np.array([False, True], dtype=bool)}
 
 
 class FakeHandlerExtract:
@@ -82,35 +54,32 @@ class FakeHandlerNoCorrections:
         return {"time shift correction": False, "time zone correction": 0}
 
 
-def test_clear_times_available_after_block_a_step() -> None:
-    idx = pd.date_range("2024-01-01", periods=3, freq="5min", tz="Etc/GMT-1")
-    handler = FakeHandlerClear(idx)
-    mask, source = _ensure_clear_times(handler)
-
-    assert isinstance(mask, pd.Series)
-    assert mask.astype(bool).all()
-    assert len(mask) == len(idx)
-    assert source.startswith("dh.boolean_masks")
+def test_get_clear_day_flags_from_get_daily_flags() -> None:
+    handler = FakeHandlerGetDailyFlags(n_days=2)
+    flags, source = get_clear_day_flags(handler)
+    assert flags is not None
+    assert flags.tolist() == [False, True]
+    assert source == "sdt:get_daily_flags:clear_day"
 
 
-def test_clear_times_numpy_array_same_length() -> None:
-    idx = pd.date_range("2024-01-01", periods=3, freq="5min", tz="Etc/GMT-1")
-    handler = FakeHandlerClearNumpy(idx)
-
-    mask, source = _ensure_clear_times(handler)
-    assert isinstance(mask, pd.Series)
-    assert len(mask) == len(handler.data_frame.index)
-    assert mask.astype(bool).all()
-    assert source.startswith("dh.boolean_masks")
+def test_get_clear_day_flags_from_daily_flags_attr() -> None:
+    handler = FakeHandlerDailyFlags(n_days=2)
+    flags, source = get_clear_day_flags(handler)
+    assert flags is not None
+    assert flags.tolist() == [True, False]
+    assert source == "sdt:daily_flags:clear_days"
 
 
-def test_clear_times_computed_via_public_method() -> None:
-    idx = pd.date_range("2024-01-01", periods=3, freq="5min", tz="Etc/GMT-1")
-    handler = FakeHandlerClearViaMethod(idx)
-
-    mask, source = _ensure_clear_times(handler)
-    assert mask.astype(bool).all()
-    assert source.startswith("dh.boolean_masks")
+def test_apply_exclusion_rules_uses_n_fit_times() -> None:
+    summary = {
+        "clipping_day_share_mean": 0.0,
+        "clipping_fraction_day_median": 0.0,
+        "n_fit_times": 0,
+        "time_shift_correction_applied": False,
+        "time_zone_correction": 0.0,
+    }
+    result = apply_exclusion_rules(summary, config={"pipeline": {"clear_time_fraction_min": 0.005}})
+    assert result["exclude_low_clear"] is True
 
 
 def test_extract_clean_power_series_works_with_introspected_attributes() -> None:

@@ -111,7 +111,10 @@ def write_sdt_introspect(
         "report": None,
         "extra": extra or {},
         "clean_power_source": (extra or {}).get("clean_power_source"),
-        "clear_times_source": (extra or {}).get("clear_times_source"),
+        "clear_days_source": (extra or {}).get("clear_days_source"),
+        "detect_clear_sky_available": bool(callable(getattr(dh, "detect_clear_sky", None))),
+        "detect_clear_days_available": bool(callable(getattr(dh, "detect_clear_days", None))),
+        "boolean_masks_dir": [],
     }
 
     try:
@@ -144,6 +147,7 @@ def write_sdt_introspect(
 
     bm = getattr(dh, "boolean_masks", None)
     if bm is not None:
+        out["boolean_masks_dir"] = [name for name in dir(bm) if not name.startswith("_")]
         for name in dir(bm):
             if name.startswith("_"):
                 continue
@@ -153,9 +157,13 @@ def write_sdt_introspect(
                 out["boolean_masks_diagnostics"].append({"name": name, "type": "<error>", "shape": str(exc)})
                 continue
             item = {"name": name, "type": type(value).__name__, "shape": _shape_for(value)}
-            stats = _bool_stats(value)
-            if stats is not None:
-                item["counts"] = stats
+            if isinstance(value, np.ndarray):
+                item["dtype"] = str(value.dtype)
+                if value.size:
+                    item["counts"] = {
+                        "true": int(np.count_nonzero(value == True)),  # noqa: E712
+                        "false": int(np.count_nonzero(value == False)),  # noqa: E712
+                    }
             out["boolean_masks_diagnostics"].append(item)
 
     try:
@@ -186,20 +194,20 @@ def _augment_mask_to_data_frame(dh: object, mask: object, target_col: str) -> pd
     df = getattr(dh, "data_frame", None)
     if not isinstance(df, pd.DataFrame) or not isinstance(df.index, pd.DatetimeIndex):
         raise RuntimeError("dh.data_frame with DatetimeIndex is required for mask augmentation.")
-    series, sample_info = _mask_to_series(mask, df.index)
-
+    sample_info = f"mask_shape={_shape_for(mask)}"
     if hasattr(dh, "augment_data_frame") and callable(getattr(dh, "augment_data_frame")):
         try:
-            dh.augment_data_frame(series, target_col)
+            dh.augment_data_frame(mask, target_col)
         except Exception as exc:
             raise RuntimeError(
                 f"augment_data_frame failed for {target_col}; mask_type={type(mask).__name__}, "
-                f"mask_shape={_shape_for(mask)}, {sample_info}, error={exc}"
+                f"{sample_info}, error={exc}"
             ) from exc
 
     df2 = getattr(dh, "data_frame", None)
     if isinstance(df2, pd.DataFrame) and target_col in df2.columns:
         return df2[target_col].reindex(df.index).fillna(False).astype(bool)
+    series, _ = _mask_to_series(mask, df.index)
     return series
 
 
@@ -290,51 +298,138 @@ def _ensure_optional_mask(dh: object, attr_name: str, target_col: str) -> tuple[
     return series, f"dh.boolean_masks.{attr_name}"
 
 
-def _ensure_clear_times(dh: object) -> tuple[pd.Series, str]:
-    """Compute and retrieve clear-times mask using SDT v2.1.x public API."""
-    attempted: list[str] = []
-
-    direct = _ensure_optional_mask(dh, "clear_times", "is_clear_time")
-    if direct is not None:
-        series, source = direct
-        if series.shape[0] == len(getattr(dh, "data_frame")):
-            if int(series.sum()) > 0 or series.notna().any():
-                return series.astype(bool), source
-
-    for method_name in (
-        "make_filled_data_matrix",
-        "find_clipped_times",
-        "get_daily_flags",
-        "calculate_scsf_performance_index",
-        "find_clear_times",
-    ):
-        method = getattr(dh, method_name, None)
-        if callable(method):
-            attempted.append(method_name)
-            try:
-                method()
-            except TypeError:
-                for kwargs in ({"return_values": True}, {"verbose": False}, {"return_values": True, "verbose": False}):
-                    try:
-                        method(**kwargs)
-                        break
-                    except Exception:
-                        continue
-            except Exception:
-                pass
-            direct = _ensure_optional_mask(dh, "clear_times", "is_clear_time")
-            if direct is not None:
-                series, source = direct
-                if series.shape[0] == len(getattr(dh, "data_frame")):
-                    return series.astype(bool), source
-
-    bm = getattr(dh, "boolean_masks", None)
-    bm_attrs = [a for a in dir(bm) if not a.startswith("_")] if bm is not None else []
-    raise RuntimeError(
-        "Could not compute usable clear-times mask via SDT public API. "
-        f"Attempted methods={attempted}, boolean_masks_attrs={bm_attrs}"
+def _coerce_bool_day_flags(value: object, n_days: int) -> np.ndarray | None:
+    arr = np.asarray(value)
+    if arr.ndim == 0:
+        return None
+    flat = arr.reshape(-1)
+    if flat.size != n_days:
+        return None
+    if flat.dtype == np.bool_:
+        return flat
+    if np.issubdtype(flat.dtype, np.number):
+        return flat.astype(float) > 0
+    series = pd.Series(flat)
+    mapped = series.map(
+        {
+            True: True,
+            False: False,
+            "true": True,
+            "false": False,
+            "clear": True,
+            "not_clear": False,
+            "1": True,
+            "0": False,
+        }
     )
+    if mapped.isna().all():
+        return None
+    return mapped.fillna(False).to_numpy(dtype=bool)
 
+
+def run_clear_day_detection(dh: object) -> str:
+    detect_clear_days = getattr(dh, "detect_clear_days", None)
+    if callable(detect_clear_days):
+        try:
+            detect_clear_days()
+            return "detect_clear_days"
+        except Exception as exc:
+            LOGGER.warning("detect_clear_days failed: %s", exc)
+
+    detect_clear_sky = getattr(dh, "detect_clear_sky", None)
+    if callable(detect_clear_sky):
+        try:
+            detect_clear_sky()
+            return "detect_clear_sky"
+        except Exception as exc:
+            LOGGER.warning("detect_clear_sky failed: %s", exc)
+
+    LOGGER.warning("clear day detection not available in this SDT DataHandler")
+    return "unavailable"
+
+
+def get_clear_day_flags(dh: object) -> tuple[np.ndarray | None, str]:
+    matrix = getattr(dh, "filled_data_matrix", None)
+    if hasattr(matrix, "shape") and len(matrix.shape) == 2:
+        n_days = int(matrix.shape[1])
+    else:
+        day_index = getattr(dh, "day_index", None)
+        n_days = int(len(day_index)) if isinstance(day_index, pd.DatetimeIndex) else 0
+    if n_days <= 0:
+        return None, "unavailable"
+
+    keys = ("clear", "clear_day", "clear_days", "clear_sky", "is_clear")
+
+    get_daily_flags = getattr(dh, "get_daily_flags", None)
+    if callable(get_daily_flags):
+        try:
+            flags = get_daily_flags()
+            if isinstance(flags, dict):
+                for key in keys:
+                    if key in flags:
+                        arr = _coerce_bool_day_flags(flags[key], n_days)
+                        if arr is not None:
+                            return arr, f"sdt:get_daily_flags:{key}"
+            if isinstance(flags, pd.DataFrame):
+                for key in keys:
+                    if key in flags.columns:
+                        arr = _coerce_bool_day_flags(flags[key].to_numpy(), n_days)
+                        if arr is not None:
+                            return arr, f"sdt:get_daily_flags:{key}"
+            if isinstance(flags, pd.Series):
+                arr = _coerce_bool_day_flags(flags.to_numpy(), n_days)
+                if arr is not None:
+                    return arr, "sdt:get_daily_flags:series"
+        except Exception as exc:
+            LOGGER.warning("get_daily_flags failed during clear-day extraction: %s", exc)
+
+    daily_flags = getattr(dh, "daily_flags", None)
+    if daily_flags is not None:
+        try:
+            attrs = vars(daily_flags)
+        except Exception:
+            attrs = {}
+        for key in keys:
+            if key in attrs:
+                arr = _coerce_bool_day_flags(attrs[key], n_days)
+                if arr is not None:
+                    return arr, f"sdt:daily_flags:{key}"
+        for key, val in attrs.items():
+            arr = _coerce_bool_day_flags(val, n_days)
+            if arr is not None:
+                return arr, f"sdt:daily_flags:{key}"
+
+    return None, "unavailable"
+
+
+def _build_fit_times(dh: object) -> tuple[pd.Series, str, int, float]:
+    bm = getattr(dh, "boolean_masks", None)
+    if bm is None:
+        df = getattr(dh, "data_frame", None)
+        if isinstance(df, pd.DataFrame):
+            return pd.Series(False, index=df.index, name="is_fit_time"), "unavailable", 0, 0.0
+        raise RuntimeError("Unable to build fit times without boolean_masks and data_frame")
+
+    run_clear_day_detection(dh)
+    clear_days, source = get_clear_day_flags(dh)
+
+    daytime = np.asarray(getattr(bm, "daytime"), dtype=bool)
+    n_rows, n_days = daytime.shape
+
+    if clear_days is not None and clear_days.size == n_days:
+        fit_times_2d = daytime & clear_days[None, :]
+        clear_days_source = source.replace("sdt:get_daily_flags", "sdt:daily_flags")
+    else:
+        fit_times_2d = daytime
+        clear_days = np.zeros(n_days, dtype=bool)
+        clear_days_source = "fallback:daytime_only"
+        LOGGER.warning("No clear-day flags available, using daytime-only fit mask")
+
+    fit_series = _augment_mask_to_data_frame(dh, fit_times_2d, "is_fit_time")
+    fit_series = fit_series.astype(bool)
+    n_clear_days = int(np.count_nonzero(clear_days))
+    clear_day_fraction = float(n_clear_days / max(n_days, 1))
+    return fit_series, clear_days_source, n_clear_days, clear_day_fraction
 
 def _clipping_mask_heuristic(ac_power_clean: pd.Series, lat: float, lon: float) -> pd.Series:
     import pvlib
@@ -375,7 +470,7 @@ def run_block_a(
     dh = DataHandler(parsed)
     dh.run_pipeline(power_col=power_col, fix_shifts=True, verbose=False)
 
-    clear_times_source = None
+    clear_days_source = "unavailable"
     clean_source = "unresolved"
     if _report_no_corrections(dh) and isinstance(getattr(dh, "data_frame", None), pd.DataFrame):
         if power_col in dh.data_frame.columns:
@@ -386,16 +481,16 @@ def run_block_a(
             dh,
             out_dir=out_dir,
             power_col=power_col,
-            extra={"stage": "after_run_pipeline", "clean_power_source": clean_source, "clear_times_source": clear_times_source},
+            extra={"stage": "after_run_pipeline", "clean_power_source": clean_source, "clear_days_source": clear_days_source},
         )
 
-    clear_col, clear_times_source = _ensure_clear_times(dh)
-    clear_col = clear_col.reindex(parsed.index).fillna(False).astype(bool)
-    clear_col.name = "is_clear_time"
-    LOGGER.info("clear_times created via %s with %d true points", clear_times_source, int(clear_col.sum()))
+    fit_col, clear_days_source, n_clear_days, clear_day_fraction = _build_fit_times(dh)
+    fit_col = fit_col.reindex(parsed.index).fillna(False).astype(bool)
+    fit_col.name = "is_fit_time"
+    LOGGER.info("fit_times created via %s with %d true points", clear_days_source, int(fit_col.sum()))
 
     if out_dir is not None:
-        _write_parquet(clear_col.to_frame(), Path(out_dir) / "03_clear_times_mask.parquet")
+        _write_parquet(fit_col.to_frame(), Path(out_dir) / "03_fit_times_mask.parquet")
 
     report = None
     try:
@@ -412,7 +507,7 @@ def run_block_a(
                     "stage": "extract_clean_power_series",
                     "error": str(exc),
                     "clean_power_source": clean_source,
-                    "clear_times_source": clear_times_source,
+                    "clear_days_source": clear_days_source,
                 },
             )
         raise
@@ -422,8 +517,8 @@ def run_block_a(
         except Exception as exc:  # pragma: no cover
             report = {"error": str(exc)}
 
-    clear_col = clear_col.reindex(ac_power_clean.index).fillna(False).astype(bool)
-    clear_col.name = "is_clear_time"
+    fit_col = fit_col.reindex(ac_power_clean.index).fillna(False).astype(bool)
+    fit_col.name = "is_fit_time"
 
     clipped_info = _ensure_optional_mask(dh, "clipped_times", "is_clipped_time")
     if clipped_info is not None:
@@ -448,13 +543,14 @@ def run_block_a(
     }
 
     n_days_total = int(len(pd.unique(local_dates)))
-    n_clear_times = int(clear_col.sum())
-    clear_frac = float(n_clear_times / max(len(clear_col), 1))
+    n_fit_times = int(fit_col.sum())
 
     sdt_summary = {
         "n_days_total": n_days_total,
-        "n_clear_times": n_clear_times,
-        "clear_time_fraction_overall": clear_frac,
+        "n_clear_days": n_clear_days,
+        "clear_day_fraction": clear_day_fraction,
+        "n_fit_times": n_fit_times,
+        "clear_days_source": clear_days_source,
         "time_shift_correction_applied": report.get("time shift correction") if isinstance(report, dict) else None,
         "time_zone_correction": report.get("time zone correction") if isinstance(report, dict) else None,
     }
@@ -472,13 +568,13 @@ def run_block_a(
         "report": report if isinstance(report, dict) else {"raw": str(report)},
         "clean_power_source": clean_source,
         "clean_power_error": clean_error,
-        "clear_times_source": clear_times_source,
+        "clear_days_source": clear_days_source,
     }
 
     return {
         "parsed": parsed,
         "ac_power_clean": ac_power_clean.to_frame(),
-        "clear_times": clear_col.to_frame(),
+        "fit_times": fit_col.to_frame(),
         "clipped_times": clipped.to_frame(name="is_clipped_time"),
         "daily_flags": daily_flags,
         "clipping_summary": clipping_summary,
@@ -492,11 +588,12 @@ def apply_exclusion_rules(summary: dict[str, Any], config: dict[str, Any]) -> di
     pconf = config.get("pipeline", {})
     clip_share_thr = float(pconf.get("clipping_threshold_day_share", 0.10))
     clip_median_thr = float(pconf.get("clipping_fraction_day_median", 0.01))
-    clear_frac_min = float(pconf.get("clear_time_fraction_min", 0.005))
+    if "clear_time_fraction_min" in pconf:
+        LOGGER.warning("pipeline.clear_time_fraction_min is deprecated and ignored.")
 
     clipping_day_share_mean = float(summary.get("clipping_day_share_mean", 0.0))
     clipping_fraction_day_median = float(summary.get("clipping_fraction_day_median", 0.0))
-    clear_time_fraction = float(summary.get("clear_time_fraction_overall", 0.0))
+    n_fit_times = int(summary.get("n_fit_times", 0))
 
     time_shift_applied = summary.get("time_shift_correction_applied")
     tz_corr = summary.get("time_zone_correction")
@@ -505,8 +602,10 @@ def apply_exclusion_rules(summary: dict[str, Any], config: dict[str, Any]) -> di
     if bool(time_shift_applied) and isinstance(tz_corr, (int, float)):
         suspect_large_shift = abs(float(tz_corr)) >= 2.0
 
+    exclude_low_clear = n_fit_times <= 0
+
     return {
         "exclude_clipping": clipping_day_share_mean >= clip_share_thr or clipping_fraction_day_median >= clip_median_thr,
-        "exclude_low_clear": clear_time_fraction < clear_frac_min,
+        "exclude_low_clear": exclude_low_clear,
         "suspect_large_shift": suspect_large_shift,
     }
