@@ -1,4 +1,19 @@
 logging:
   level: INFO
-input:
+
+paths:
+  output_root: outputs
   plants_csv: data/processed/plants.csv
+
+pipeline:
+  fit_tau: 0.03
+  clipping_threshold_day_share: 0.10
+  clipping_fraction_day_median: 0.01
+  clear_time_fraction_min: 0.005
+
+# run-single example:
+# pv-ident run-single -c examples/config.yml --system-id sys_demo --input examples/example_single.csv
+# run-wide example:
+# pv-ident run-wide -c examples/config.yml --input examples/example_wide.csv
+# run manifest example:
+# pv-ident run -c examples/config.yml --manifest examples/manifest.csv

@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pv-profiler"
-version = "0.1.0"
-description = "Skeleton package for PV profiling workflows"
+version = "0.2.0"
+description = "PV identification pipeline scaffold with implemented blocks A-C"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -15,6 +15,7 @@ dependencies = [
   "numpy",
   "pyyaml",
   "matplotlib",
+  "pyarrow",
   "pytest",
 ]
 
