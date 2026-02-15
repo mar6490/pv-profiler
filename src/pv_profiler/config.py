@@ -20,7 +20,6 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "fit_tau": 0.03,
         "clipping_threshold_day_share": 0.10,
         "clipping_fraction_day_median": 0.01,
-        "clear_time_fraction_min": 0.005,
     },
     "orientation": {
         "az_min": 90,
