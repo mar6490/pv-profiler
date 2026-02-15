@@ -44,6 +44,44 @@ def _shape_for(value: object) -> str | None:
     return None
 
 
+def _bool_stats(value: object) -> dict[str, int] | None:
+    try:
+        if isinstance(value, pd.Series):
+            arr = value.to_numpy()
+        elif isinstance(value, np.ndarray):
+            arr = value
+        elif isinstance(value, (list, tuple)):
+            arr = np.asarray(value)
+        else:
+            return None
+        flat = np.ravel(arr)
+        if flat.size == 0 or flat.size > 1_000_000:
+            return None
+        series = pd.Series(flat)
+        n_true = int((series == True).sum())  # noqa: E712
+        n_false = int((series == False).sum())  # noqa: E712
+        n_nan = int(series.isna().sum())
+        return {"true": n_true, "false": n_false, "nan": n_nan}
+    except Exception:  # pragma: no cover
+        return None
+
+
+def _report_no_corrections(dh: object) -> bool:
+    try:
+        report = dh.report(return_values=True)
+    except Exception:
+        return False
+    if not isinstance(report, dict):
+        return False
+    ts_ok = report.get("time shift correction") is False
+    tz_val = report.get("time zone correction")
+    try:
+        tz_ok = float(tz_val) == 0.0
+    except Exception:
+        tz_ok = False
+    return ts_ok and tz_ok
+
+
 def write_sdt_introspect(
     dh: object,
     out_dir: str | Path,
@@ -69,6 +107,7 @@ def write_sdt_introspect(
         "data_frame_columns": [],
         "data_frame_head": "",
         "selected_attributes": [],
+        "boolean_masks_diagnostics": [],
         "report": None,
         "extra": extra or {},
         "clean_power_source": (extra or {}).get("clean_power_source"),
@@ -101,8 +140,23 @@ def write_sdt_introspect(
             )
         except Exception as exc:  # pragma: no cover
             selected_attributes.append({"name": name, "type": "<error>", "shape": str(exc)})
-
     out["selected_attributes"] = selected_attributes
+
+    bm = getattr(dh, "boolean_masks", None)
+    if bm is not None:
+        for name in dir(bm):
+            if name.startswith("_"):
+                continue
+            try:
+                value = getattr(bm, name)
+            except Exception as exc:  # pragma: no cover
+                out["boolean_masks_diagnostics"].append({"name": name, "type": "<error>", "shape": str(exc)})
+                continue
+            item = {"name": name, "type": type(value).__name__, "shape": _shape_for(value)}
+            stats = _bool_stats(value)
+            if stats is not None:
+                item["counts"] = stats
+            out["boolean_masks_diagnostics"].append(item)
 
     try:
         out["report"] = dh.report(return_values=True)
@@ -115,7 +169,41 @@ def write_sdt_introspect(
     return out
 
 
-def _reconstruct_series_from_matrix(dh: object, matrix_attr: str, power_col: str) -> tuple[pd.Series, str] | None:
+def _mask_to_series(mask: object, index: pd.DatetimeIndex) -> tuple[pd.Series, str]:
+    if isinstance(mask, pd.Series):
+        series = mask.reindex(index)
+    else:
+        arr = np.asarray(mask)
+        flat = np.ravel(arr)
+        if flat.size != len(index):
+            raise ValueError(f"mask size {flat.size} does not match index length {len(index)}")
+        series = pd.Series(flat, index=index)
+    unique_sample = pd.Series(series).dropna().astype(str).unique()[:10].tolist()
+    return series.fillna(False).astype(bool), f"sample_unique={unique_sample}"
+
+
+def _augment_mask_to_data_frame(dh: object, mask: object, target_col: str) -> pd.Series:
+    df = getattr(dh, "data_frame", None)
+    if not isinstance(df, pd.DataFrame) or not isinstance(df.index, pd.DatetimeIndex):
+        raise RuntimeError("dh.data_frame with DatetimeIndex is required for mask augmentation.")
+    series, sample_info = _mask_to_series(mask, df.index)
+
+    if hasattr(dh, "augment_data_frame") and callable(getattr(dh, "augment_data_frame")):
+        try:
+            dh.augment_data_frame(series, target_col)
+        except Exception as exc:
+            raise RuntimeError(
+                f"augment_data_frame failed for {target_col}; mask_type={type(mask).__name__}, "
+                f"mask_shape={_shape_for(mask)}, {sample_info}, error={exc}"
+            ) from exc
+
+    df2 = getattr(dh, "data_frame", None)
+    if isinstance(df2, pd.DataFrame) and target_col in df2.columns:
+        return df2[target_col].reindex(df.index).fillna(False).astype(bool)
+    return series
+
+
+def _reconstruct_series_from_matrix(dh: object, matrix_attr: str) -> tuple[pd.Series, str] | None:
     matrix = getattr(dh, matrix_attr, None)
     df = getattr(dh, "data_frame", None)
     day_index = getattr(dh, "day_index", None)
@@ -126,7 +214,6 @@ def _reconstruct_series_from_matrix(dh: object, matrix_attr: str, power_col: str
         return None
 
     day_lookup = {pd.Timestamp(d).normalize(): i for i, d in enumerate(day_index)}
-
     values = []
     for ts, seq in zip(df.index, df["seq_index"], strict=False):
         day_pos = day_lookup.get(pd.Timestamp(ts).normalize())
@@ -151,18 +238,24 @@ def extract_clean_power_series(dh: object, power_col: str = "ac_power") -> tuple
     """Extract SDT shift-corrected clean power series deterministically."""
     df = getattr(dh, "data_frame", None)
     if isinstance(df, pd.DataFrame) and isinstance(df.index, pd.DatetimeIndex):
+        # Required fast path: no corrections -> use power column directly.
+        if _report_no_corrections(dh) and power_col in df.columns:
+            series = pd.to_numeric(df[power_col], errors="coerce").rename("ac_power_clean")
+            if series.index.tz is None:
+                series.index = series.index.tz_localize(INTERNAL_TZ)
+            else:
+                series.index = series.index.tz_convert(INTERNAL_TZ)
+            return series, f"data_frame:{power_col}:no_corrections"
+
         scored_cols: list[tuple[int, str]] = []
         for col in df.columns:
             lname = str(col).lower()
-            score = 0
-            if str(col) == power_col:
-                score += 10
-            if power_col.lower() in lname or "power" in lname:
-                score += 3
-            if any(k in lname for k in ("clean", "filled", "processed", "fixed", "shift")):
-                score += 5
-            if score > 0 and pd.api.types.is_numeric_dtype(df[col]):
-                scored_cols.append((score, str(col)))
+            if not any(k in lname for k in ("clean", "filled", "processed", "fixed", "shift")):
+                continue
+            if not pd.api.types.is_numeric_dtype(df[col]):
+                continue
+            score = 5 + (3 if (power_col.lower() in lname or "power" in lname) else 0)
+            scored_cols.append((score, str(col)))
 
         if scored_cols:
             scored_cols.sort(key=lambda x: (-x[0], x[1]))
@@ -175,45 +268,45 @@ def extract_clean_power_series(dh: object, power_col: str = "ac_power") -> tuple
             return series, f"dh.data_frame[{selected_col!r}]"
 
     for matrix_attr in ("filled_data_matrix", "processed_data_matrix"):
-        reconstructed = _reconstruct_series_from_matrix(dh, matrix_attr=matrix_attr, power_col=power_col)
+        reconstructed = _reconstruct_series_from_matrix(dh, matrix_attr=matrix_attr)
         if reconstructed is not None:
             return reconstructed
 
     raise RuntimeError(
         "Unable to identify SDT cleaned shift-corrected power series through public attributes. "
-        "Expected one of: numeric post-pipeline power column in dh.data_frame OR "
-        "reconstructable filled/processed matrix with day_index+seq_index."
+        "Expected one of: no-corrections data_frame power_col, explicit post-pipeline column, "
+        "or reconstructable filled/processed matrix with day_index+seq_index."
     )
+
+
+def _ensure_optional_mask(dh: object, attr_name: str, target_col: str) -> tuple[pd.Series, str] | None:
+    bm = getattr(dh, "boolean_masks", None)
+    if bm is None or not hasattr(bm, attr_name):
+        return None
+    values = getattr(bm, attr_name)
+    if values is None:
+        return None
+    series = _augment_mask_to_data_frame(dh, values, target_col)
+    return series, f"dh.boolean_masks.{attr_name}"
 
 
 def _ensure_clear_times(dh: object) -> tuple[pd.Series, str]:
     """Compute and retrieve clear-times mask using SDT v2.1.x public API."""
     attempted: list[str] = []
 
-    def _from_boolean_masks() -> tuple[pd.Series, str] | None:
-        bm = getattr(dh, "boolean_masks", None)
-        if bm is None:
-            return None
-        for attr in ("clear_times", "clear_time", "clear"):
-            if hasattr(bm, attr):
-                values = getattr(bm, attr)
-                if values is not None:
-                    if isinstance(values, pd.Series):
-                        series = values.astype(bool)
-                    else:
-                        series = pd.Series(np.asarray(values).astype(bool), index=getattr(dh, "data_frame").index)
-                    return series, f"dh.boolean_masks.{attr}"
-        return None
-
-    found = _from_boolean_masks()
-    if found is not None:
-        return found
+    direct = _ensure_optional_mask(dh, "clear_times", "is_clear_time")
+    if direct is not None:
+        series, source = direct
+        if series.shape[0] == len(getattr(dh, "data_frame")):
+            if int(series.sum()) > 0 or series.notna().any():
+                return series.astype(bool), source
 
     for method_name in (
         "make_filled_data_matrix",
         "find_clipped_times",
         "get_daily_flags",
         "calculate_scsf_performance_index",
+        "find_clear_times",
     ):
         method = getattr(dh, method_name, None)
         if callable(method):
@@ -221,20 +314,24 @@ def _ensure_clear_times(dh: object) -> tuple[pd.Series, str]:
             try:
                 method()
             except TypeError:
-                try:
-                    method(return_values=True)
-                except Exception:
-                    pass
+                for kwargs in ({"return_values": True}, {"verbose": False}, {"return_values": True, "verbose": False}):
+                    try:
+                        method(**kwargs)
+                        break
+                    except Exception:
+                        continue
             except Exception:
                 pass
-            found = _from_boolean_masks()
-            if found is not None:
-                return found
+            direct = _ensure_optional_mask(dh, "clear_times", "is_clear_time")
+            if direct is not None:
+                series, source = direct
+                if series.shape[0] == len(getattr(dh, "data_frame")):
+                    return series.astype(bool), source
 
     bm = getattr(dh, "boolean_masks", None)
     bm_attrs = [a for a in dir(bm) if not a.startswith("_")] if bm is not None else []
     raise RuntimeError(
-        "Could not compute clear-times mask via SDT public API. "
+        "Could not compute usable clear-times mask via SDT public API. "
         f"Attempted methods={attempted}, boolean_masks_attrs={bm_attrs}"
     )
 
@@ -280,6 +377,10 @@ def run_block_a(
 
     clear_times_source = None
     clean_source = "unresolved"
+    if _report_no_corrections(dh) and isinstance(getattr(dh, "data_frame", None), pd.DataFrame):
+        if power_col in dh.data_frame.columns:
+            clean_source = f"data_frame:{power_col}:no_corrections"
+
     if out_dir is not None:
         write_sdt_introspect(
             dh,
@@ -289,11 +390,9 @@ def run_block_a(
         )
 
     clear_col, clear_times_source = _ensure_clear_times(dh)
-    if hasattr(dh, "augment_data_frame") and callable(getattr(dh, "augment_data_frame")):
-        dh.augment_data_frame(clear_col, "is_clear_time")
-
     clear_col = clear_col.reindex(parsed.index).fillna(False).astype(bool)
     clear_col.name = "is_clear_time"
+    LOGGER.info("clear_times created via %s with %d true points", clear_times_source, int(clear_col.sum()))
 
     if out_dir is not None:
         _write_parquet(clear_col.to_frame(), Path(out_dir) / "03_clear_times_mask.parquet")
@@ -326,8 +425,13 @@ def run_block_a(
     clear_col = clear_col.reindex(ac_power_clean.index).fillna(False).astype(bool)
     clear_col.name = "is_clear_time"
 
-    clipped = _clipping_mask_heuristic(ac_power_clean, lat=lat, lon=lon)
-    clipped = clipped.reindex(ac_power_clean.index).fillna(False)
+    clipped_info = _ensure_optional_mask(dh, "clipped_times", "is_clipped_time")
+    if clipped_info is not None:
+        clipped, _clipped_source = clipped_info
+        clipped = clipped.reindex(ac_power_clean.index).fillna(False).astype(bool)
+    else:
+        clipped = _clipping_mask_heuristic(ac_power_clean, lat=lat, lon=lon)
+        clipped = clipped.reindex(ac_power_clean.index).fillna(False)
 
     local_dates = pd.Index(ac_power_clean.index.tz_convert(INTERNAL_TZ).date, name="date")
     clipping_day_share = (
@@ -375,7 +479,7 @@ def run_block_a(
         "parsed": parsed,
         "ac_power_clean": ac_power_clean.to_frame(),
         "clear_times": clear_col.to_frame(),
-        "clipped_times": clipped.to_frame(),
+        "clipped_times": clipped.to_frame(name="is_clipped_time"),
         "daily_flags": daily_flags,
         "clipping_summary": clipping_summary,
         "sdt_summary": sdt_summary,
