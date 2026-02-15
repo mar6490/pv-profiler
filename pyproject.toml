@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pv-profiler"
+version = "0.1.0"
+description = "Skeleton package for PV profiling workflows"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "solar-data-tools==2.1.1",
+  "pvlib==0.10.4",
+  "pandas",
+  "numpy",
+  "pyyaml",
+  "matplotlib",
+  "pytest",
+]
+
+[project.scripts]
+pv-ident = "pv_profiler.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

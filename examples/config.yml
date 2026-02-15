@@ -1,0 +1,4 @@
+logging:
+  level: INFO
+input:
+  plants_csv: data/processed/plants.csv
