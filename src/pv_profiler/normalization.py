@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pandas as pd
-import pvlib
 
 from pv_profiler.validation import INTERNAL_TZ
 
@@ -12,6 +11,8 @@ def daytime_mask(index: pd.DatetimeIndex, lat: float, lon: float) -> pd.Series:
     """Return daytime mask using apparent elevation > 3° in fixed internal timezone."""
     if str(index.tz) != INTERNAL_TZ:
         index = index.tz_convert(INTERNAL_TZ)
+    import pvlib
+
     solar_pos = pvlib.solarposition.get_solarposition(index, latitude=lat, longitude=lon)
     return solar_pos["apparent_elevation"] > 3.0
 

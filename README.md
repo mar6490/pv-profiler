@@ -8,6 +8,13 @@
 pip install -e .
 ```
 
+## Abhängigkeiten (wichtig)
+
+- `solar-data-tools==2.1.2`
+- `pvlib>=0.11.2,<0.12`
+- `numpy<2.1`
+- weitere Abhängigkeiten gemäß `pyproject.toml`
+
 ## Zeitkonzept (entscheidend)
 
 - Interne Rechenzeitbasis ist **immer** `Etc/GMT-1` (fixed UTC+01:00, CET ohne DST).

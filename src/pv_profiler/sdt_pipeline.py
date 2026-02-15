@@ -7,7 +7,6 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-import pvlib
 
 from pv_profiler.validation import INTERNAL_TZ
 
@@ -66,6 +65,8 @@ def extract_clean_power_series(dh: object, power_col: str = "ac_power") -> tuple
 
 
 def _clipping_mask_heuristic(ac_power_clean: pd.Series, lat: float, lon: float) -> pd.Series:
+    import pvlib
+
     solar_pos = pvlib.solarposition.get_solarposition(ac_power_clean.index, latitude=lat, longitude=lon)
     daytime = solar_pos["apparent_elevation"] > 3.0
     day_max = ac_power_clean.where(daytime).groupby(ac_power_clean.index.date).transform("max")
