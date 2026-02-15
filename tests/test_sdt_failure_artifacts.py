@@ -11,19 +11,24 @@ from pv_profiler.sdt_pipeline import run_block_a
 
 class FakeMasks:
     def __init__(self, n: int) -> None:
-        self.clear_times = pd.Series([True] * n)
+        self.daytime = pd.Series([True] * n).to_numpy().reshape(n, 1)
+        self.missing_values = pd.Series([False] * n).to_numpy().reshape(n, 1)
+        self.infill = pd.Series([False] * n).to_numpy().reshape(n, 1)
 
 
 class FakeDataHandler:
     def __init__(self, df: pd.DataFrame) -> None:
         self.data_frame = df.copy()
         self.boolean_masks = FakeMasks(len(df))
+        self.filled_data_matrix = self.data_frame[["ac_power"]].to_numpy()
+        self.daily_flags = SimpleNamespace(clear_day=[True])
 
     def run_pipeline(self, power_col: str, fix_shifts: bool, verbose: bool) -> None:
         _ = (power_col, fix_shifts, verbose)
 
-    def augment_data_frame(self, values: pd.Series, name: str) -> None:
-        self.data_frame[name] = values.values
+    def augment_data_frame(self, values, name: str) -> None:
+        import numpy as np
+        self.data_frame[name] = np.asarray(values).reshape(-1)
 
     def report(self, return_values: bool = True):
         _ = return_values

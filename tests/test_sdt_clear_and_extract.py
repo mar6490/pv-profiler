@@ -3,44 +3,26 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from pv_profiler.sdt_pipeline import _ensure_clear_times, apply_exclusion_rules, extract_clean_power_series
+from pv_profiler.sdt_pipeline import apply_exclusion_rules, extract_clean_power_series, get_clear_day_flags
 
 
-class FakeBooleanMasks:
-    def __init__(self, n_rows: int, n_days: int) -> None:
-        self.clear_times = None
-        self.daytime = np.ones((n_rows, n_days), dtype=bool)
-        self.missing_values = np.zeros((n_rows, n_days), dtype=bool)
-        self.infill = np.zeros((n_rows, n_days), dtype=bool)
+class FakeDailyFlags:
+    def __init__(self, clear_days: np.ndarray) -> None:
+        self.clear_days = clear_days
 
 
-class FakeHandlerClearDays:
-    def __init__(self, idx: pd.DatetimeIndex, n_rows: int, n_days: int) -> None:
-        self.data_frame = pd.DataFrame({"ac_power": [0.0] * len(idx), "seq_index": np.arange(len(idx))}, index=idx)
-        self.filled_data_matrix = np.zeros((n_rows, n_days), dtype=float)
-        self.boolean_masks = FakeBooleanMasks(n_rows=n_rows, n_days=n_days)
-        self.augment_calls: list[tuple[tuple[int, ...], str]] = []
-
-    def detect_clear_days(self):
-        return np.array([True, False], dtype=bool)
-
-    def augment_data_frame(self, values, name: str):
-        arr = np.asarray(values)
-        self.augment_calls.append((arr.shape, name))
-        self.data_frame[name] = arr.reshape(-1)
+class FakeHandlerDailyFlags:
+    def __init__(self, n_days: int) -> None:
+        self.filled_data_matrix = np.zeros((3, n_days), dtype=float)
+        self.daily_flags = FakeDailyFlags(np.array([True, False], dtype=bool))
 
 
-class FakeHandlerDaytimeFallback:
-    def __init__(self, idx: pd.DatetimeIndex, n_rows: int, n_days: int) -> None:
-        self.data_frame = pd.DataFrame({"ac_power": [0.0] * len(idx), "seq_index": np.arange(len(idx))}, index=idx)
-        self.filled_data_matrix = np.zeros((n_rows, n_days), dtype=float)
-        self.boolean_masks = FakeBooleanMasks(n_rows=n_rows, n_days=n_days)
-        self.augment_calls: list[tuple[tuple[int, ...], str]] = []
+class FakeHandlerGetDailyFlags:
+    def __init__(self, n_days: int) -> None:
+        self.filled_data_matrix = np.zeros((3, n_days), dtype=float)
 
-    def augment_data_frame(self, values, name: str):
-        arr = np.asarray(values)
-        self.augment_calls.append((arr.shape, name))
-        self.data_frame[name] = arr.reshape(-1)
+    def get_daily_flags(self):
+        return {"clear_day": np.array([False, True], dtype=bool)}
 
 
 class FakeHandlerExtract:
@@ -72,35 +54,27 @@ class FakeHandlerNoCorrections:
         return {"time shift correction": False, "time zone correction": 0}
 
 
-def test_clear_times_uses_detect_clear_days_tiled_mask_when_clear_times_none() -> None:
-    idx = pd.date_range("2024-01-01", periods=6, freq="5min", tz="Etc/GMT-1")
-    handler = FakeHandlerClearDays(idx=idx, n_rows=3, n_days=2)
-
-    mask, source = _ensure_clear_times(handler)
-
-    assert isinstance(mask, pd.Series)
-    assert source == "detect_clear_days:tiled&daytime&~missing"
-    assert handler.augment_calls[0] == ((3, 2), "is_clear_time")
-    assert mask.astype(bool).tolist() == [True, False, True, False, True, False]
+def test_get_clear_day_flags_from_get_daily_flags() -> None:
+    handler = FakeHandlerGetDailyFlags(n_days=2)
+    flags, source = get_clear_day_flags(handler)
+    assert flags is not None
+    assert flags.tolist() == [False, True]
+    assert source == "sdt:get_daily_flags:clear_day"
 
 
-def test_clear_times_falls_back_to_daytime_only_when_detect_clear_days_missing() -> None:
-    idx = pd.date_range("2024-01-01", periods=4, freq="5min", tz="Etc/GMT-1")
-    handler = FakeHandlerDaytimeFallback(idx=idx, n_rows=2, n_days=2)
-
-    mask, source = _ensure_clear_times(handler)
-
-    assert source == "fallback:daytime_only"
-    assert handler.augment_calls[0] == ((2, 2), "is_clear_time")
-    assert mask.astype(bool).all()
+def test_get_clear_day_flags_from_daily_flags_attr() -> None:
+    handler = FakeHandlerDailyFlags(n_days=2)
+    flags, source = get_clear_day_flags(handler)
+    assert flags is not None
+    assert flags.tolist() == [True, False]
+    assert source == "sdt:daily_flags:clear_days"
 
 
-def test_apply_exclusion_rules_forces_low_clear_on_daytime_only_fallback() -> None:
+def test_apply_exclusion_rules_uses_n_fit_times() -> None:
     summary = {
         "clipping_day_share_mean": 0.0,
         "clipping_fraction_day_median": 0.0,
-        "clear_time_fraction_overall": 0.9,
-        "clear_times_source": "fallback:daytime_only",
+        "n_fit_times": 0,
         "time_shift_correction_applied": False,
         "time_zone_correction": 0.0,
     }

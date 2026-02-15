@@ -135,7 +135,7 @@ def test_shading_map_binning(monkeypatch, tmp_path: Path) -> None:
 
     shading_map, metrics = compute_shading(
         ac_power_clean=ac,
-        clear_times=clear,
+        fit_times=clear,
         poa_cs=poa,
         kWp_effective=4.0,
         lat=52.5,

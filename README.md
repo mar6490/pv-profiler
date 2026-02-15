@@ -53,7 +53,7 @@ pip install -e .
 
 ### Block A–C (bestehend)
 
-- A: SDT Onboarding, clear/clipping masks, A3 Exclusion-Flags
+- A: SDT Onboarding, Clear-Day-Detection, fit-times/clipping masks, A3 Exclusion-Flags
 - B: Normalisierung mit Q0.995
 - C: Fit-Maske (`fit_mask`)
 
@@ -77,7 +77,7 @@ pip install -e .
 ### Block E (voll implementiert)
 
 - Residual: `r = ac_power_clean / p_hat_unshaded_scaled`
-- Filter für Residuale: clear-times, `POA_cs > 200`, `r > 0`
+- Filter für Residuale: fit-times, `POA_cs > 200`, `r > 0`
 - 2D-Binning (Solar-Azimuth/Solar-Elevation) -> `shading_map.parquet`
 - Indizes:
   - `global_shading_index`
@@ -94,7 +94,7 @@ pip install -e .
 outputs/<system_id>/<YYYYMMDD_HHMMSS>/
   01_parsed_tzaware.parquet
   02_cleaned_timeshift_fixed.parquet
-  03_clear_times_mask.parquet
+  03_fit_times_mask.parquet
   04_daily_flags.csv
   05_clipping_summary.json
   06_clipped_times_mask.parquet
