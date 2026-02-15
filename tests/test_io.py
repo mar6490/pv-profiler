@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
-from pv_profiler.io import read_single_plant, read_wide_plants
+from pv_profiler.io import read_single_plant, read_wide_plants, write_json
 
 
 def test_read_single_plant_csv(tmp_path: Path) -> None:
@@ -43,3 +45,23 @@ def test_read_single_plant_parquet_with_datetime_index(tmp_path: Path) -> None:
     df = read_single_plant(path)
     assert "ac_power" in df.columns
     assert str(df.index.tz) == "Etc/GMT-1"
+
+
+def test_write_json_handles_numpy_pandas_path_types(tmp_path: Path) -> None:
+    out = tmp_path / "payload.json"
+    payload = {
+        "flag": np.bool_(True),
+        "count": np.int64(1),
+        "arr": np.array([1, 2]),
+        "ts": pd.Timestamp("2024-01-01T00:00:00"),
+        "path": tmp_path / "x.txt",
+    }
+
+    write_json(payload, out)
+
+    loaded = json.loads(out.read_text(encoding="utf-8"))
+    assert loaded["flag"] is True
+    assert loaded["count"] == 1
+    assert loaded["arr"] == [1, 2]
+    assert loaded["ts"].startswith("2024-01-01T00:00:00")
+    assert loaded["path"].endswith("x.txt")
