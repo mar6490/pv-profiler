@@ -35,6 +35,21 @@ class FakeDataHandler:
         return {"time shift correction": False, "time zone correction": 0.0}
 
 
+class FakeDataHandlerClippingMemoryError(FakeDataHandler):
+    def __init__(self, df: pd.DataFrame) -> None:
+        super().__init__(df)
+        self._last_solver = None
+
+    def detect_clear_days(self, solver: str | None = None):
+        # would crash with None.lower(); verifies solver is always passed as a string
+        self._last_solver = solver.lower()
+        return [True]
+
+    def find_clipped_times(self, solver: str | None = None):
+        _ = solver
+        raise MemoryError("Unable to allocate 4.66 GiB")
+
+
 def test_block_a_writes_debug_artifacts_on_extract_failure(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setitem(__import__("sys").modules, "solardatatools", SimpleNamespace(DataHandler=FakeDataHandler))
 
@@ -54,3 +69,31 @@ def test_block_a_writes_debug_artifacts_on_extract_failure(monkeypatch, tmp_path
 
     assert (tmp_path / "01_parsed_tzaware.parquet").exists()
     assert (tmp_path / "07_sdt_introspect.json").exists()
+
+
+def test_block_a_clipping_memoryerror_falls_back_to_no_clipping(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "solardatatools",
+        SimpleNamespace(DataHandler=FakeDataHandlerClippingMemoryError),
+    )
+
+    idx = pd.date_range("2024-01-01", periods=6, freq="5min", tz="Etc/GMT-1")
+    ac = pd.Series([0, 0, 1, 2, 1, 0], index=idx)
+
+    result = run_block_a(
+        ac_power=ac,
+        lat=52.5,
+        lon=13.4,
+        out_dir=tmp_path,
+        config={"pipeline": {"skip_clipping": False}},
+    )
+
+    clipped = result["clipped_times"]["is_clipped_time"]
+    assert (~clipped).all()
+
+    summary = result["sdt_summary"]
+    assert summary["skip_clipping"] is False
+    assert summary["clipping_detection_used"] is True
+    assert summary["clipping_detection_failed"] is True
+    assert "Unable to allocate" in str(summary.get("clipping_detection_error"))

@@ -63,6 +63,7 @@ pip install "solar-data-tools @ git+https://github.com/slacgismo/solar-data-tool
 ### Block A–C (bestehend)
 
 - A: SDT Onboarding, Clear-Day-Detection, fit-times/clipping masks, A3 Exclusion-Flags
+  - `pipeline.skip_clipping: true` (default) überspringt SDT-Clipping-Detection aus Stabilitätsgründen und nutzt eine no-clipping-Maske.
 - B: Normalisierung mit Q0.995
 - C: Fit-Maske (`fit_mask`)
 

@@ -13,8 +13,8 @@ def _fake_write_parquet(df, path: Path) -> None:
     frame.to_csv(path, index=True)
 
 
-def _fake_block_a(power: pd.Series, lat: float, lon: float, out_dir: Path):
-    _ = (lat, lon, out_dir)
+def _fake_block_a(power: pd.Series, lat: float, lon: float, out_dir: Path, config=None):
+    _ = (lat, lon, out_dir, config)
     idx = power.index
     clipped = pd.Series(False, index=idx, name="is_clipped_time")
     fit_times = pd.Series(True, index=idx, name="is_fit_time")

@@ -166,6 +166,39 @@ def write_sdt_introspect(
                     }
             out["boolean_masks_diagnostics"].append(item)
 
+    daily_flags = getattr(dh, "daily_flags", None)
+    if daily_flags is not None:
+        try:
+            daily_attrs = vars(daily_flags)
+        except Exception:
+            daily_attrs = {}
+        for key, value in daily_attrs.items():
+            stats = _bool_stats(value)
+            if stats is not None:
+                out["boolean_masks_diagnostics"].append(
+                    {
+                        "name": f"daily_flags.{key}",
+                        "type": type(value).__name__,
+                        "shape": _shape_for(value),
+                        "counts": stats,
+                    }
+                )
+
+    df_masks = getattr(dh, "data_frame", None)
+    if isinstance(df_masks, pd.DataFrame):
+        for col in ("is_fit_time", "is_clipped_time"):
+            if col in df_masks.columns:
+                stats = _bool_stats(df_masks[col])
+                if stats is not None:
+                    out["boolean_masks_diagnostics"].append(
+                        {
+                            "name": f"data_frame.{col}",
+                            "type": "Series",
+                            "shape": _shape_for(df_masks[col]),
+                            "counts": stats,
+                        }
+                    )
+
     try:
         out["report"] = dh.report(return_values=True)
     except Exception as exc:  # pragma: no cover
@@ -327,10 +360,20 @@ def _coerce_bool_day_flags(value: object, n_days: int) -> np.ndarray | None:
     return mapped.fillna(False).to_numpy(dtype=bool)
 
 
-def run_clear_day_detection(dh: object) -> str:
+def _safe_solver_name(value: object, default: str = "OSQP") -> str:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return default
+
+
+def run_clear_day_detection(dh: object, solver: str = "OSQP") -> str:
+    solver_name = _safe_solver_name(solver)
     detect_clear_days = getattr(dh, "detect_clear_days", None)
     if callable(detect_clear_days):
         try:
+            detect_clear_days(solver=solver_name)
+            return "detect_clear_days"
+        except TypeError:
             detect_clear_days()
             return "detect_clear_days"
         except Exception as exc:
@@ -339,6 +382,9 @@ def run_clear_day_detection(dh: object) -> str:
     detect_clear_sky = getattr(dh, "detect_clear_sky", None)
     if callable(detect_clear_sky):
         try:
+            detect_clear_sky(solver=solver_name)
+            return "detect_clear_sky"
+        except TypeError:
             detect_clear_sky()
             return "detect_clear_sky"
         except Exception as exc:
@@ -402,7 +448,116 @@ def get_clear_day_flags(dh: object) -> tuple[np.ndarray | None, str]:
     return None, "unavailable"
 
 
+def _all_false_clipped_series(dh: object) -> pd.Series:
+    df = getattr(dh, "data_frame", None)
+    if isinstance(df, pd.DataFrame) and isinstance(df.index, pd.DatetimeIndex):
+        return pd.Series(False, index=df.index, name="is_clipped_time")
+    return pd.Series(dtype=bool, name="is_clipped_time")
+
+
+def run_clipping_detection_safe(dh: object, solver: str) -> tuple[np.ndarray | None, str | None]:
+    solver_name = _safe_solver_name(solver)
+    find_clipped_times = getattr(dh, "find_clipped_times", None)
+    if not callable(find_clipped_times):
+        return None, "find_clipped_times_not_available"
+    try:
+        find_clipped_times(solver=solver_name)
+    except TypeError:
+        try:
+            find_clipped_times()
+        except MemoryError as exc:
+            LOGGER.warning("SDT clipping detection MemoryError: %s", exc)
+            return None, str(exc)
+        except Exception as exc:
+            LOGGER.warning("SDT clipping detection failed: %s", exc)
+            return None, str(exc)
+    except MemoryError as exc:
+        LOGGER.warning("SDT clipping detection MemoryError: %s", exc)
+        return None, str(exc)
+    except Exception as exc:
+        LOGGER.warning("SDT clipping detection failed: %s", exc)
+        return None, str(exc)
+
+def get_clear_day_flags(dh: object) -> tuple[np.ndarray | None, str]:
+    matrix = getattr(dh, "filled_data_matrix", None)
+    if hasattr(matrix, "shape") and len(matrix.shape) == 2:
+        n_days = int(matrix.shape[1])
+    else:
+        day_index = getattr(dh, "day_index", None)
+        n_days = int(len(day_index)) if isinstance(day_index, pd.DatetimeIndex) else 0
+    if n_days <= 0:
+        return None, "unavailable"
+
+    keys = ("clear", "clear_day", "clear_days", "clear_sky", "is_clear")
+
+    get_daily_flags = getattr(dh, "get_daily_flags", None)
+    if callable(get_daily_flags):
+        try:
+            flags = get_daily_flags()
+            if isinstance(flags, dict):
+                for key in keys:
+                    if key in flags:
+                        arr = _coerce_bool_day_flags(flags[key], n_days)
+                        if arr is not None:
+                            return arr, f"sdt:get_daily_flags:{key}"
+            if isinstance(flags, pd.DataFrame):
+                for key in keys:
+                    if key in flags.columns:
+                        arr = _coerce_bool_day_flags(flags[key].to_numpy(), n_days)
+                        if arr is not None:
+                            return arr, f"sdt:get_daily_flags:{key}"
+            if isinstance(flags, pd.Series):
+                arr = _coerce_bool_day_flags(flags.to_numpy(), n_days)
+                if arr is not None:
+                    return arr, "sdt:get_daily_flags:series"
+        except Exception as exc:
+            LOGGER.warning("get_daily_flags failed during clear-day extraction: %s", exc)
+
+    daily_flags = getattr(dh, "daily_flags", None)
+    if daily_flags is not None:
+        try:
+            attrs = vars(daily_flags)
+        except Exception:
+            attrs = {}
+        for key in keys:
+            if key in attrs:
+                arr = _coerce_bool_day_flags(attrs[key], n_days)
+                if arr is not None:
+                    return arr, f"sdt:daily_flags:{key}"
+        for key, val in attrs.items():
+            arr = _coerce_bool_day_flags(val, n_days)
+            if arr is not None:
+                return arr, f"sdt:daily_flags:{key}"
+
+    return None, "unavailable"
+
+
 def _build_fit_times(dh: object) -> tuple[pd.Series, str, int, float]:
+    bm = getattr(dh, "boolean_masks", None)
+    clipped = getattr(bm, "clipped_times", None) if bm is not None else None
+    if isinstance(clipped, np.ndarray):
+        return clipped, None
+    return None, "clipped_times_not_generated"
+
+    daytime = np.asarray(getattr(bm, "daytime"), dtype=bool)
+    n_rows, n_days = daytime.shape
+
+    if clear_days is not None and clear_days.size == n_days:
+        fit_times_2d = daytime & clear_days[None, :]
+        clear_days_source = source.replace("sdt:get_daily_flags", "sdt:daily_flags")
+    else:
+        fit_times_2d = daytime
+        clear_days = np.zeros(n_days, dtype=bool)
+        clear_days_source = "fallback:daytime_only"
+        LOGGER.warning("No clear-day flags available, using daytime-only fit mask")
+
+    fit_series = _augment_mask_to_data_frame(dh, fit_times_2d, "is_fit_time")
+    fit_series = fit_series.astype(bool)
+    n_clear_days = int(np.count_nonzero(clear_days))
+    clear_day_fraction = float(n_clear_days / max(n_days, 1))
+    return fit_series, clear_days_source, n_clear_days, clear_day_fraction
+
+def _build_fit_times(dh: object, solver: str) -> tuple[pd.Series, str, int, float]:
     bm = getattr(dh, "boolean_masks", None)
     if bm is None:
         df = getattr(dh, "data_frame", None)
@@ -410,7 +565,7 @@ def _build_fit_times(dh: object) -> tuple[pd.Series, str, int, float]:
             return pd.Series(False, index=df.index, name="is_fit_time"), "unavailable", 0, 0.0
         raise RuntimeError("Unable to build fit times without boolean_masks and data_frame")
 
-    run_clear_day_detection(dh)
+    run_clear_day_detection(dh, solver=solver)
     clear_days, source = get_clear_day_flags(dh)
 
     daytime = np.asarray(getattr(bm, "daytime"), dtype=bool)
@@ -448,6 +603,7 @@ def run_block_a(
     lat: float,
     lon: float,
     power_col: str = "ac_power",
+    config: dict[str, Any] | None = None,
     out_dir: str | Path | None = None,
 ) -> dict[str, Any]:
     """Run Block A (A1/A2/A3) and return artifacts and summaries."""
@@ -470,6 +626,10 @@ def run_block_a(
     dh = DataHandler(parsed)
     dh.run_pipeline(power_col=power_col, fix_shifts=True, verbose=False)
 
+    pipeline_cfg = (config or {}).get("pipeline", {})
+    skip_clipping = bool(pipeline_cfg.get("skip_clipping", True))
+    solver_name = _safe_solver_name(pipeline_cfg.get("solver", "OSQP"))
+
     clear_days_source = "unavailable"
     clean_source = "unresolved"
     if _report_no_corrections(dh) and isinstance(getattr(dh, "data_frame", None), pd.DataFrame):
@@ -484,7 +644,7 @@ def run_block_a(
             extra={"stage": "after_run_pipeline", "clean_power_source": clean_source, "clear_days_source": clear_days_source},
         )
 
-    fit_col, clear_days_source, n_clear_days, clear_day_fraction = _build_fit_times(dh)
+    fit_col, clear_days_source, n_clear_days, clear_day_fraction = _build_fit_times(dh, solver=solver_name)
     fit_col = fit_col.reindex(parsed.index).fillna(False).astype(bool)
     fit_col.name = "is_fit_time"
     LOGGER.info("fit_times created via %s with %d true points", clear_days_source, int(fit_col.sum()))
@@ -520,13 +680,25 @@ def run_block_a(
     fit_col = fit_col.reindex(ac_power_clean.index).fillna(False).astype(bool)
     fit_col.name = "is_fit_time"
 
-    clipped_info = _ensure_optional_mask(dh, "clipped_times", "is_clipped_time")
-    if clipped_info is not None:
-        clipped, _clipped_source = clipped_info
-        clipped = clipped.reindex(ac_power_clean.index).fillna(False).astype(bool)
+    clipping_detection_used = False
+    clipping_detection_failed = False
+    clipping_detection_error = None
+
+    clipped: pd.Series
+    if skip_clipping:
+        LOGGER.info("Skipping SDT clipping detection by config")
+        clipped = _all_false_clipped_series(dh).reindex(ac_power_clean.index).fillna(False).astype(bool)
     else:
-        clipped = _clipping_mask_heuristic(ac_power_clean, lat=lat, lon=lon)
-        clipped = clipped.reindex(ac_power_clean.index).fillna(False)
+        clipping_detection_used = True
+        clipped_2d, clipping_error = run_clipping_detection_safe(dh, solver=solver_name)
+        if clipped_2d is None:
+            clipping_detection_failed = True
+            clipping_detection_error = clipping_error
+            LOGGER.warning("Clipping detection failed; using no-clipping mask.")
+            clipped = _all_false_clipped_series(dh).reindex(ac_power_clean.index).fillna(False).astype(bool)
+        else:
+            clipped = _augment_mask_to_data_frame(dh, clipped_2d, "is_clipped_time")
+            clipped = clipped.reindex(ac_power_clean.index).fillna(False).astype(bool)
 
     local_dates = pd.Index(ac_power_clean.index.tz_convert(INTERNAL_TZ).date, name="date")
     clipping_day_share = (
@@ -551,6 +723,10 @@ def run_block_a(
         "clear_day_fraction": clear_day_fraction,
         "n_fit_times": n_fit_times,
         "clear_days_source": clear_days_source,
+        "skip_clipping": skip_clipping,
+        "clipping_detection_used": clipping_detection_used,
+        "clipping_detection_failed": clipping_detection_failed,
+        "clipping_detection_error": clipping_detection_error,
         "time_shift_correction_applied": report.get("time shift correction") if isinstance(report, dict) else None,
         "time_zone_correction": report.get("time zone correction") if isinstance(report, dict) else None,
     }
@@ -569,6 +745,8 @@ def run_block_a(
         "clean_power_source": clean_source,
         "clean_power_error": clean_error,
         "clear_days_source": clear_days_source,
+        "fit_times_counts": {"true": int(fit_col.sum()), "false": int((~fit_col).sum())},
+        "clipped_times_counts": {"true": int(clipped.sum()), "false": int((~clipped).sum())},
     }
 
     return {

@@ -53,7 +53,7 @@ def process_single_system(
     out_dir = _system_output_dir(config["paths"]["output_root"], system_id=system_id, run_label=run_label)
     power = df["ac_power"].rename("ac_power")
 
-    block_a = run_block_a(power, lat=lat, lon=lon, out_dir=out_dir)
+    block_a = run_block_a(power, lat=lat, lon=lon, config=config, out_dir=out_dir)
 
     write_parquet(block_a["parsed"], out_dir / "01_parsed_tzaware.parquet")
     write_parquet(block_a["ac_power_clean"], out_dir / "02_cleaned_timeshift_fixed.parquet")
