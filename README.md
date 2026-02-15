@@ -8,9 +8,18 @@
 pip install -e .
 ```
 
+SDT-Hinweis:
+
+- Standardmäßig wird `solar-data-tools` aus PyPI installiert (aktuell typischerweise 2.1.1).
+- Optional kann SDT v2.1.2 direkt vom Git-Tag installiert werden:
+
+```bash
+pip install "solar-data-tools @ git+https://github.com/slacgismo/solar-data-tools.git@v2.1.2"
+```
+
 ## Abhängigkeiten (wichtig)
 
-- `solar-data-tools==2.1.1`
+- `solar-data-tools>=2.1.1,<2.2`
 - `pvlib>=0.11.2,<0.12`
 - `numpy<2.1`
 - weitere Abhängigkeiten gemäß `pyproject.toml`
