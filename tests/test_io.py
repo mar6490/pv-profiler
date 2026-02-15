@@ -33,3 +33,13 @@ def test_read_wide_plants_csv(tmp_path: Path) -> None:
 
     df = read_wide_plants(path)
     assert list(df.columns) == ["s1", "s2"]
+
+
+def test_read_single_plant_parquet_with_datetime_index(tmp_path: Path) -> None:
+    path = tmp_path / "single_index.parquet"
+    idx = pd.date_range("2024-01-01T00:00:00", periods=2, freq="5min")
+    pd.DataFrame({"ac_power": [1.0, 2.0]}, index=idx).to_parquet(path)
+
+    df = read_single_plant(path)
+    assert "ac_power" in df.columns
+    assert str(df.index.tz) == "Etc/GMT-1"

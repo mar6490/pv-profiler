@@ -30,6 +30,7 @@ pip install -e .
 - CSV/Parquet mit Spalten:
   - `timestamp` (konfigurierbar via `input.timestamp_col`)
   - `ac_power` oder z. B. `P_AC` (konfigurierbar via `input.power_col`)
+  - alternativ darf bei Parquet der Timestamp als `DatetimeIndex` vorliegen
 - Sampling-Regeln (strict):
   - exakt 5-Minuten-Raster
   - keine fehlenden Zeitpunkte

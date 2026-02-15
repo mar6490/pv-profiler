@@ -11,6 +11,22 @@ import pandas as pd
 from pv_profiler.validation import parse_and_validate_timestamp_index, validate_power_series, validate_regular_sampling
 
 
+def _resolve_timestamp_values(df: pd.DataFrame, timestamp_col: str) -> pd.Series | pd.Index:
+    """Resolve timestamp source from explicit column, case-insensitive column, or DatetimeIndex."""
+    if timestamp_col in df.columns:
+        return df[timestamp_col]
+
+    lowered = {str(c).lower(): c for c in df.columns}
+    key = timestamp_col.lower()
+    if key in lowered:
+        return df[lowered[key]]
+
+    if isinstance(df.index, pd.DatetimeIndex):
+        return pd.Series(df.index, index=df.index)
+
+    raise ValueError(f"Missing timestamp column '{timestamp_col}'.")
+
+
 def _read_table(path: str | Path) -> pd.DataFrame:
     p = Path(path)
     suffix = p.suffix.lower()
@@ -24,10 +40,9 @@ def _read_table(path: str | Path) -> pd.DataFrame:
 def read_single_plant(path: str | Path, timestamp_col: str = "timestamp", power_col: str = "ac_power") -> pd.DataFrame:
     """Load single-plant time series and validate contract."""
     df = _read_table(path)
-    if timestamp_col not in df.columns:
-        raise ValueError(f"Missing timestamp column '{timestamp_col}'.")
+    timestamp_values = _resolve_timestamp_values(df, timestamp_col)
     validate_power_series(df, power_col)
-    index = parse_and_validate_timestamp_index(df[timestamp_col])
+    index = parse_and_validate_timestamp_index(timestamp_values)
     out = pd.DataFrame({"ac_power": pd.to_numeric(df[power_col], errors="coerce")}, index=index)
     out = out.sort_index()
     validate_regular_sampling(out.index)
@@ -37,10 +52,19 @@ def read_single_plant(path: str | Path, timestamp_col: str = "timestamp", power_
 def read_wide_plants(path: str | Path, timestamp_col: str = "timestamp") -> pd.DataFrame:
     """Load wide multi-system file and validate the shared timestamp index."""
     df = _read_table(path)
-    if timestamp_col not in df.columns:
-        raise ValueError(f"Missing timestamp column '{timestamp_col}'.")
-    index = parse_and_validate_timestamp_index(df[timestamp_col])
-    wide = df.drop(columns=[timestamp_col]).apply(pd.to_numeric, errors="coerce")
+    timestamp_values = _resolve_timestamp_values(df, timestamp_col)
+    index = parse_and_validate_timestamp_index(timestamp_values)
+
+    if timestamp_col in df.columns:
+        wide_source = df.drop(columns=[timestamp_col])
+    else:
+        lowered = {str(c).lower(): c for c in df.columns}
+        if timestamp_col.lower() in lowered:
+            wide_source = df.drop(columns=[lowered[timestamp_col.lower()]])
+        else:
+            wide_source = df
+
+    wide = wide_source.apply(pd.to_numeric, errors="coerce")
     wide.index = index
     wide = wide.sort_index()
     validate_regular_sampling(wide.index)
