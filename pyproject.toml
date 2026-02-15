@@ -9,7 +9,7 @@ description = "PV identification pipeline scaffold with implemented blocks A-C"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-  "solar-data-tools==2.1.2",
+  "solar-data-tools==2.1.1",
   "pvlib>=0.11.2,<0.12",
   "pandas",
   "numpy<2.1",

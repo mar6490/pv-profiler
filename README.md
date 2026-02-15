@@ -10,7 +10,7 @@ pip install -e .
 
 ## Abhängigkeiten (wichtig)
 
-- `solar-data-tools==2.1.2`
+- `solar-data-tools==2.1.1`
 - `pvlib>=0.11.2,<0.12`
 - `numpy<2.1`
 - weitere Abhängigkeiten gemäß `pyproject.toml`
