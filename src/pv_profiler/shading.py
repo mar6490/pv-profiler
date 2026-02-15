@@ -20,7 +20,7 @@ def _bin_centers(values: pd.Series, bin_deg: int, min_edge: int, max_edge: int) 
 
 def compute_shading(
     ac_power_clean: pd.Series,
-    clear_times: pd.Series,
+    fit_times: pd.Series,
     poa_cs: pd.Series,
     kWp_effective: float,
     *,
@@ -47,9 +47,9 @@ def compute_shading(
     p_hat_unshaded_scaled = kWp_effective * (poa_cs / 1000.0)
     r = (ac_power_clean / p_hat_unshaded_scaled).rename("r")
 
-    clear_mask = clear_times.reindex(times).fillna(False).astype(bool)
+    fit_mask = fit_times.reindex(times).fillna(False).astype(bool)
     poa_filter = poa_cs.reindex(times) > 200.0
-    residual_base = clear_mask & poa_filter & r.notna() & (r > 0)
+    residual_base = fit_mask & poa_filter & r.notna() & (r > 0)
 
     az = solar["azimuth"].rename("azimuth")
     el = solar["apparent_elevation"].rename("elevation")

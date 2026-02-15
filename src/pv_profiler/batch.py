@@ -53,11 +53,11 @@ def process_single_system(
     out_dir = _system_output_dir(config["paths"]["output_root"], system_id=system_id, run_label=run_label)
     power = df["ac_power"].rename("ac_power")
 
-    block_a = run_block_a(power, lat=lat, lon=lon, out_dir=out_dir)
+    block_a = run_block_a(power, lat=lat, lon=lon, config=config, out_dir=out_dir)
 
     write_parquet(block_a["parsed"], out_dir / "01_parsed_tzaware.parquet")
     write_parquet(block_a["ac_power_clean"], out_dir / "02_cleaned_timeshift_fixed.parquet")
-    write_parquet(block_a["clear_times"], out_dir / "03_clear_times_mask.parquet")
+    write_parquet(block_a["fit_times"], out_dir / "03_fit_times_mask.parquet")
     write_csv(block_a["daily_flags"], out_dir / "04_daily_flags.csv")
     write_json(block_a["clipping_summary"], out_dir / "05_clipping_summary.json")
     write_parquet(block_a["clipped_times"], out_dir / "06_clipped_times_mask.parquet")
@@ -79,7 +79,7 @@ def process_single_system(
     tau = float(config.get("pipeline", {}).get("fit_tau", 0.03))
     fit_mask, daily_fit_fraction = compute_fit_mask(
         p_norm=p_norm,
-        is_clear_time=block_a["clear_times"]["is_clear_time"],
+        is_clear_time=block_a["fit_times"]["is_fit_time"],
         is_clipped_time=block_a["clipped_times"]["is_clipped_time"],
         tau=tau,
     )
@@ -127,7 +127,7 @@ def process_single_system(
 
     shading_map, shading_metrics = compute_shading(
         ac_power_clean=block_a["ac_power_clean"]["ac_power_clean"],
-        clear_times=block_a["clear_times"]["is_clear_time"],
+        fit_times=block_a["fit_times"]["is_fit_time"],
         poa_cs=orientation_artifacts.poa_unshaded,
         kWp_effective=capacity_result["kWp_effective"],
         lat=lat,
