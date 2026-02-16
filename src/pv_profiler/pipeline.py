@@ -1,0 +1,130 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+import pandas as pd
+
+from .block_diagnostics import compute_diagnostics
+from .block_io import load_input_for_sdt, read_metadata, read_power_timeseries, write_input_loader_artifacts
+from .block_orientation import estimate_orientation
+from .block_sdt import run_block2_sdt, run_sdt_onboarding, write_block2_artifacts
+from .types import InputLoaderResult, RunSingleResult, SdtBlockResult
+
+
+def run_block1_input_loader(
+    input_csv: str | Path,
+    output_dir: str | Path,
+    timestamp_col: str = "timestamp",
+    power_col: str = "P_AC",
+    timezone: str | None = None,
+    resample_if_irregular: bool = True,
+    min_samples: int = 288,
+    clip_negative_power: bool = True,
+) -> InputLoaderResult:
+    result = load_input_for_sdt(
+        input_path=input_csv,
+        timestamp_col=timestamp_col,
+        power_col=power_col,
+        timezone=timezone,
+        resample_if_irregular=resample_if_irregular,
+        min_samples=min_samples,
+        clip_negative_power=clip_negative_power,
+    )
+    write_input_loader_artifacts(result, output_dir=output_dir)
+    return result
+
+
+def run_single(
+    input_csv: str | Path,
+    metadata_path: str | Path | None = None,
+    power_column: str = "P_AC",
+) -> RunSingleResult:
+    io_data = read_power_timeseries(input_csv, power_column=power_column)
+    metadata = read_metadata(metadata_path)
+
+    latitude = float(metadata.get("lat", 0.0))
+    longitude = float(metadata.get("lon", 0.0))
+    if latitude == 0.0 and longitude == 0.0:
+        raise ValueError("Metadata must include valid lat/lon for orientation estimation.")
+
+    preprocessed, sdt_warnings = run_sdt_onboarding(io_data.data)
+
+    orientation = estimate_orientation(
+        preprocessed,
+        latitude=latitude,
+        longitude=longitude,
+        altitude=metadata.get("alt"),
+    )
+
+    diagnostics = compute_diagnostics(preprocessed, extra_warnings=sdt_warnings)
+    return RunSingleResult(orientation=orientation, diagnostics=diagnostics, metadata=metadata)
+
+
+def run_block2_sdt_from_df(
+    power_df: pd.DataFrame,
+    output_dir: str | Path,
+    *,
+    solver: str = "CLARABEL",
+    fix_shifts: bool = True,
+    power_col: str = "power",
+) -> SdtBlockResult:
+    result = run_block2_sdt(
+        power_df=power_df,
+        solver=solver,
+        fix_shifts=fix_shifts,
+        power_col=power_col,
+    )
+    write_block2_artifacts(result, output_dir)
+    return result
+
+
+def run_block2_sdt_from_parquet(
+    input_parquet: str | Path,
+    output_dir: str | Path,
+    *,
+    solver: str = "CLARABEL",
+    fix_shifts: bool = True,
+    power_col: str = "power",
+) -> SdtBlockResult:
+    power_df = pd.read_parquet(input_parquet)
+    if power_col not in power_df.columns and "power" in power_df.columns:
+        power_col = "power"
+    return run_block2_sdt_from_df(
+        power_df=power_df,
+        output_dir=output_dir,
+        solver=solver,
+        fix_shifts=fix_shifts,
+        power_col=power_col,
+    )
+
+
+def run_block2_sdt_from_csv(
+    input_csv: str | Path,
+    output_dir: str | Path,
+    *,
+    timestamp_col: str = "timestamp",
+    power_col: str = "P_AC",
+    timezone: str | None = None,
+    resample_if_irregular: bool = True,
+    min_samples: int = 288,
+    clip_negative_power: bool = True,
+    solver: str = "CLARABEL",
+    fix_shifts: bool = True,
+) -> SdtBlockResult:
+    block1 = run_block1_input_loader(
+        input_csv=input_csv,
+        output_dir=output_dir,
+        timestamp_col=timestamp_col,
+        power_col=power_col,
+        timezone=timezone,
+        resample_if_irregular=resample_if_irregular,
+        min_samples=min_samples,
+        clip_negative_power=clip_negative_power,
+    )
+    return run_block2_sdt_from_df(
+        power_df=block1.data,
+        output_dir=output_dir,
+        solver=solver,
+        fix_shifts=fix_shifts,
+        power_col="power",
+    )
