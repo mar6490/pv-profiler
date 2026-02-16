@@ -21,6 +21,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "clipping_threshold_day_share": 0.10,
         "clipping_fraction_day_median": 0.01,
         "skip_clipping": True,
+        "fix_shifts": True,
+        "solver": "CLARABEL",
     },
     "orientation": {
         "az_min": 90,

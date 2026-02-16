@@ -12,6 +12,7 @@ import pandas as pd
 
 from pv_profiler.validation import INTERNAL_TZ
 
+
 LOGGER = logging.getLogger(__name__)
 
 
@@ -268,10 +269,6 @@ def _reconstruct_series_from_matrix(dh: object, matrix_attr: str) -> tuple[pd.Se
         values.append(matrix[row, day_pos])
 
     series = pd.Series(values, index=df.index, name="ac_power_clean")
-    if series.index.tz is None:
-        series.index = series.index.tz_localize(INTERNAL_TZ)
-    else:
-        series.index = series.index.tz_convert(INTERNAL_TZ)
     return series, f"dh.{matrix_attr}+dh.day_index+dh.data_frame.seq_index"
 
 
@@ -282,10 +279,6 @@ def extract_clean_power_series(dh: object, power_col: str = "ac_power") -> tuple
         # Required fast path: no corrections -> use power column directly.
         if _report_no_corrections(dh) and power_col in df.columns:
             series = pd.to_numeric(df[power_col], errors="coerce").rename("ac_power_clean")
-            if series.index.tz is None:
-                series.index = series.index.tz_localize(INTERNAL_TZ)
-            else:
-                series.index = series.index.tz_convert(INTERNAL_TZ)
             return series, f"data_frame:{power_col}:no_corrections"
 
         scored_cols: list[tuple[int, str]] = []
@@ -302,10 +295,6 @@ def extract_clean_power_series(dh: object, power_col: str = "ac_power") -> tuple
             scored_cols.sort(key=lambda x: (-x[0], x[1]))
             selected_col = scored_cols[0][1]
             series = pd.to_numeric(df[selected_col], errors="coerce").rename("ac_power_clean")
-            if series.index.tz is None:
-                series.index = series.index.tz_localize(INTERNAL_TZ)
-            else:
-                series.index = series.index.tz_convert(INTERNAL_TZ)
             return series, f"dh.data_frame[{selected_col!r}]"
 
     for matrix_attr in ("filled_data_matrix", "processed_data_matrix"):
@@ -360,7 +349,7 @@ def _coerce_bool_day_flags(value: object, n_days: int) -> np.ndarray | None:
     return mapped.fillna(False).to_numpy(dtype=bool)
 
 
-def _safe_solver_name(value: object, default: str = "OSQP") -> str:
+def _safe_solver_name(value: object, default: str = "CLARABEL") -> str:
     if isinstance(value, str) and value.strip():
         return value.strip()
     return default
@@ -602,7 +591,7 @@ def run_block_a(
     ac_power: pd.Series,
     lat: float,
     lon: float,
-    power_col: str = "ac_power",
+    power_col: str = "power",
     config: dict[str, Any] | None = None,
     out_dir: str | Path | None = None,
 ) -> dict[str, Any]:
@@ -613,28 +602,42 @@ def run_block_a(
         raise ValueError("ac_power index must be DatetimeIndex.")
 
     ac_power = ac_power.copy()
-    if str(ac_power.index.tz) != INTERNAL_TZ:
-        ac_power.index = ac_power.index.tz_convert(INTERNAL_TZ)
+    if ac_power.index.tz is not None:
+        ac_power.index = ac_power.index.tz_localize(None)
 
-    parsed = ac_power.rename("ac_power").to_frame()
+    parsed = ac_power.rename("power").to_frame()
 
     if out_dir is not None:
         out_path = Path(out_dir)
         out_path.mkdir(parents=True, exist_ok=True)
         _write_parquet(parsed, out_path / "01_parsed_tzaware.parquet")
 
-    dh = DataHandler(parsed)
-    dh.run_pipeline(power_col=power_col, fix_shifts=True, verbose=False)
-
     pipeline_cfg = (config or {}).get("pipeline", {})
+    solver_name = _safe_solver_name(pipeline_cfg.get("solver", "CLARABEL"))
+    fix_shifts = bool(pipeline_cfg.get("fix_shifts", True))
     skip_clipping = bool(pipeline_cfg.get("skip_clipping", True))
-    solver_name = _safe_solver_name(pipeline_cfg.get("solver", "OSQP"))
+
+    diffs = parsed.index.to_series().diff().value_counts().head().to_dict()
+    power_positive_share = float((parsed["power"] > 0).mean()) if len(parsed) else 0.0
+    LOGGER.info(
+        "SDT input debug: shape=%s cols=%s tz=%s min_time=%s max_time=%s dt_counts_head=%s positive_share=%.6f",
+        parsed.shape,
+        list(parsed.columns),
+        parsed.index.tz,
+        parsed.index.min() if len(parsed) else None,
+        parsed.index.max() if len(parsed) else None,
+        diffs,
+        power_positive_share,
+    )
+
+    dh = DataHandler(parsed)
+    dh.run_pipeline(power_col="power", fix_shifts=fix_shifts, solver=solver_name)
 
     clear_days_source = "unavailable"
     clean_source = "unresolved"
     if _report_no_corrections(dh) and isinstance(getattr(dh, "data_frame", None), pd.DataFrame):
-        if power_col in dh.data_frame.columns:
-            clean_source = f"data_frame:{power_col}:no_corrections"
+        if "power" in dh.data_frame.columns:
+            clean_source = "data_frame:power:no_corrections"
 
     if out_dir is not None:
         write_sdt_introspect(
@@ -654,7 +657,7 @@ def run_block_a(
 
     report = None
     try:
-        ac_power_clean, clean_source = extract_clean_power_series(dh, power_col=power_col)
+        ac_power_clean, clean_source = extract_clean_power_series(dh, power_col="power")
         clean_error = None
     except Exception as exc:
         clean_error = str(exc)
@@ -677,6 +680,11 @@ def run_block_a(
         except Exception as exc:  # pragma: no cover
             report = {"error": str(exc)}
 
+    if ac_power_clean.index.tz is None:
+        ac_power_clean.index = ac_power_clean.index.tz_localize(INTERNAL_TZ)
+    if fit_col.index.tz is None:
+        fit_col.index = fit_col.index.tz_localize(INTERNAL_TZ)
+
     fit_col = fit_col.reindex(ac_power_clean.index).fillna(False).astype(bool)
     fit_col.name = "is_fit_time"
 
@@ -687,7 +695,10 @@ def run_block_a(
     clipped: pd.Series
     if skip_clipping:
         LOGGER.info("Skipping SDT clipping detection by config")
-        clipped = _all_false_clipped_series(dh).reindex(ac_power_clean.index).fillna(False).astype(bool)
+        clipped = _all_false_clipped_series(dh)
+        if clipped.index.tz is None:
+            clipped.index = clipped.index.tz_localize(INTERNAL_TZ)
+        clipped = clipped.reindex(ac_power_clean.index).fillna(False).astype(bool)
     else:
         clipping_detection_used = True
         clipped_2d, clipping_error = run_clipping_detection_safe(dh, solver=solver_name)
@@ -695,12 +706,17 @@ def run_block_a(
             clipping_detection_failed = True
             clipping_detection_error = clipping_error
             LOGGER.warning("Clipping detection failed; using no-clipping mask.")
-            clipped = _all_false_clipped_series(dh).reindex(ac_power_clean.index).fillna(False).astype(bool)
+            clipped = _all_false_clipped_series(dh)
+            if clipped.index.tz is None:
+                clipped.index = clipped.index.tz_localize(INTERNAL_TZ)
+            clipped = clipped.reindex(ac_power_clean.index).fillna(False).astype(bool)
         else:
             clipped = _augment_mask_to_data_frame(dh, clipped_2d, "is_clipped_time")
+            if clipped.index.tz is None:
+                clipped.index = clipped.index.tz_localize(INTERNAL_TZ)
             clipped = clipped.reindex(ac_power_clean.index).fillna(False).astype(bool)
 
-    local_dates = pd.Index(ac_power_clean.index.tz_convert(INTERNAL_TZ).date, name="date")
+    local_dates = pd.Index(ac_power_clean.index.date, name="date")
     clipping_day_share = (
         pd.DataFrame({"date": local_dates, "is_clipped": clipped.astype(int)})
         .groupby("date", as_index=False)["is_clipped"]
@@ -738,6 +754,34 @@ def run_block_a(
         }
     )
 
+
+    if out_dir is not None:
+        out_path = Path(out_dir)
+        try:
+            report_payload = dh.report(return_values=True)
+        except Exception as exc:  # pragma: no cover
+            report_payload = {"error": str(exc)}
+        (out_path / "sdt_report.json").write_text(json.dumps(report_payload, indent=2, default=str), encoding="utf-8")
+
+        if hasattr(dh, "daily_flags") and getattr(dh, "daily_flags") is not None:
+            try:
+                payload = vars(getattr(dh, "daily_flags"))
+                pd.DataFrame(payload).to_csv(out_path / "sdt_daily_flags.csv", index=False)
+            except Exception:
+                daily_flags.to_csv(out_path / "sdt_daily_flags.csv", index=False)
+        else:
+            daily_flags.to_csv(out_path / "sdt_daily_flags.csv", index=False)
+
+        fdm = getattr(dh, "filled_data_matrix", None)
+        if isinstance(fdm, np.ndarray):
+            pd.DataFrame(fdm).to_parquet(out_path / "sdt_filled_data_matrix.parquet")
+
+        if isinstance(getattr(dh, "data_frame", None), pd.DataFrame):
+            data_frame = dh.data_frame.copy()
+            data_frame.to_parquet(out_path / "sdt_filled_timeseries.parquet")
+            data_frame.to_csv(out_path / "sdt_filled_timeseries.csv", index=True)
+
+        fit_col.to_frame(name="is_fit_time").to_parquet(out_path / "fit_times_mask.parquet")
     introspect = {
         "data_frame_columns": list(getattr(dh, "data_frame", pd.DataFrame()).columns),
         "dh_attributes": _sdt_dir_attrs(dh),

@@ -53,7 +53,7 @@ def test_run_single_smoke(tmp_path: Path, monkeypatch) -> None:
                 "2024-01-01T12:05:00",
                 "2024-01-01T12:10:00",
             ],
-            "ac_power": [100.0, 120.0, 110.0],
+            "P_AC": [100.0, 120.0, 110.0],
         }
     ).to_csv(input_csv, index=False)
 
