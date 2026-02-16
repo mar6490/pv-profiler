@@ -34,6 +34,25 @@ pip install "solar-data-tools @ git+https://github.com/slacgismo/solar-data-tool
 
 ## Input Contract
 
+`run-single` unterstützt explizit CSV-Dateien mit folgendem Profil (Notebook-kompatibel für SDT-Onboarding):
+
+- comma-separated (`input.sep: ","`)
+- encoding `utf-8-sig`
+- Spalten `timestamp` und `P_AC` (konfigurierbar)
+- naive Timestamps `YYYY-MM-DD HH:MM:SS` (`input.tz_handling: naive`)
+
+Empfohlene Config-Parameter:
+
+- `input.file_type: csv`
+- `input.sep: ","`
+- `input.encoding: "utf-8-sig"`
+- `input.timestamp_col: timestamp`
+- `input.power_col: P_AC`
+- `input.tz_handling: naive`
+- `pipeline.solver: "CLARABEL"`
+- `pipeline.fix_shifts: true`
+- `pipeline.verbose_sdt: false`
+
 ### Modus 1: Single-Plant File
 
 - CSV/Parquet mit Spalten:

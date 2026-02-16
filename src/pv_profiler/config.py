@@ -13,11 +13,18 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "plants_csv": "data/processed/plants.csv",
     },
     "input": {
+        "file_type": "csv",
+        "sep": ",",
+        "encoding": "utf-8-sig",
         "timestamp_col": "timestamp",
         "power_col": "ac_power",
+        "tz_handling": "naive",
     },
     "pipeline": {
         "fit_tau": 0.03,
+        "solver": "CLARABEL",
+        "fix_shifts": True,
+        "verbose_sdt": False,
         "clipping_threshold_day_share": 0.10,
         "clipping_fraction_day_median": 0.01,
         "skip_clipping": True,

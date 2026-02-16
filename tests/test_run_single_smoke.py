@@ -23,6 +23,10 @@ def _fake_block_a(power: pd.Series, lat: float, lon: float, out_dir: Path, confi
         "ac_power_clean": power.rename("ac_power_clean").to_frame(),
         "fit_times": fit_times.to_frame(),
         "clipped_times": clipped.to_frame(),
+        "raw_data_matrix": pd.DataFrame([[1.0], [2.0], [3.0]]),
+        "filled_data_matrix": pd.DataFrame([[1.0], [2.0], [3.0]]),
+        "sdt_daily_flags": pd.DataFrame({"clear": [True]}),
+        "filled_timeseries": power.rename("filled_power").to_frame(),
         "daily_flags": pd.DataFrame({"date": [str(idx[0].date())], "clipping_day_share": [0.0]}),
         "clipping_summary": {"clipping_day_share_mean": 0.0, "clipping_fraction_day_median": 0.0, "n_days": 1},
         "sdt_summary": {
@@ -43,7 +47,13 @@ def test_run_single_smoke(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(batch, "run_block_a", _fake_block_a)
     monkeypatch.setattr(batch, "compute_daily_peak_and_norm", lambda **kwargs: (pd.DataFrame({"metric":["x"],"value":[1.0]}), pd.Series([1.0,1.0,1.0], index=kwargs["ac_power_clean"].index, name="p_norm")))
     monkeypatch.setattr(batch, "compute_fit_mask", lambda **kwargs: (pd.Series([True, True, True], index=kwargs["p_norm"].index, name="fit_mask"), pd.DataFrame({"date":[str(kwargs["p_norm"].index[0].date())],"daily_fit_fraction":[1.0]})))
-    monkeypatch.setattr(batch, "fit_orientation", lambda **kwargs: (_ for _ in ()).throw(RuntimeError("stop-after-c")))
+    monkeypatch.setattr(
+        batch,
+        "fit_orientation",
+        lambda **kwargs: type("X", (), {"result": {"model_type": "single", "tilt_deg": 20.0, "score_rmse": 0.1}, "poa_unshaded": pd.Series([800.0, 810.0, 790.0], index=kwargs["ac_power_clean"].index), "diagnostics": pd.DataFrame({"x": [1]})})(),
+    )
+    monkeypatch.setattr(batch, "estimate_kWp_effective", lambda **kwargs: {"kWp_effective": 1.0})
+    monkeypatch.setattr(batch, "compute_shading", lambda **kwargs: (pd.DataFrame({"a": [1]}), {"global_shading_index": 0.1, "morning_shading_index": 0.1, "evening_shading_index": 0.1}))
 
     input_csv = tmp_path / "example_single.csv"
     pd.DataFrame(
@@ -53,7 +63,7 @@ def test_run_single_smoke(tmp_path: Path, monkeypatch) -> None:
                 "2024-01-01T12:05:00",
                 "2024-01-01T12:10:00",
             ],
-            "ac_power": [100.0, 120.0, 110.0],
+            "P_AC": [100.0, 120.0, 110.0],
         }
     ).to_csv(input_csv, index=False)
 
@@ -71,7 +81,15 @@ def test_run_single_smoke(tmp_path: Path, monkeypatch) -> None:
 
     cfg = {
         "paths": {"output_root": str(tmp_path / "outputs"), "plants_csv": str(plants_csv)},
-        "pipeline": {"fit_tau": 0.03},
+        "input": {
+            "file_type": "csv",
+            "sep": ",",
+            "encoding": "utf-8-sig",
+            "timestamp_col": "timestamp",
+            "power_col": "P_AC",
+            "tz_handling": "naive",
+        },
+        "pipeline": {"fit_tau": 0.03, "solver": "CLARABEL", "fix_shifts": True, "verbose_sdt": False},
     }
 
     try:
@@ -89,10 +107,20 @@ def test_run_single_smoke(tmp_path: Path, monkeypatch) -> None:
         "06_clipped_times_mask.parquet",
         "07_sdt_summary.json",
         "07_sdt_introspect.json",
+        "sdt_raw_data_matrix.parquet",
+        "sdt_filled_data_matrix.parquet",
+        "sdt_daily_flags.csv",
+        "sdt_filled_timeseries.parquet",
+        "sdt_filled_timeseries.csv",
         "08_daily_peak.csv",
         "09_p_norm.parquet",
         "11_fit_mask.parquet",
         "12_daily_fit_fraction.csv",
+        "13_orientation_result.json",
+        "14_fit_diagnostics.csv",
+        "shading_map.parquet",
+        "shading_metrics.json",
+        "summary.json",
     ]
     for filename in expected:
         assert (run_dir / filename).exists(), filename

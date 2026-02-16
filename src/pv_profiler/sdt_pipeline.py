@@ -616,7 +616,7 @@ def run_block_a(
     if str(ac_power.index.tz) != INTERNAL_TZ:
         ac_power.index = ac_power.index.tz_convert(INTERNAL_TZ)
 
-    parsed = ac_power.rename("ac_power").to_frame()
+    parsed = ac_power.rename(power_col).to_frame()
 
     if out_dir is not None:
         out_path = Path(out_dir)
@@ -624,11 +624,13 @@ def run_block_a(
         _write_parquet(parsed, out_path / "01_parsed_tzaware.parquet")
 
     dh = DataHandler(parsed)
-    dh.run_pipeline(power_col=power_col, fix_shifts=True, verbose=False)
-
     pipeline_cfg = (config or {}).get("pipeline", {})
+    solver_name = _safe_solver_name(pipeline_cfg.get("solver", "CLARABEL"), default="CLARABEL")
+    fix_shifts = bool(pipeline_cfg.get("fix_shifts", True))
+    verbose_sdt = bool(pipeline_cfg.get("verbose_sdt", False))
+    dh.run_pipeline(power_col=power_col, fix_shifts=fix_shifts, solver=solver_name, verbose=verbose_sdt)
+
     skip_clipping = bool(pipeline_cfg.get("skip_clipping", True))
-    solver_name = _safe_solver_name(pipeline_cfg.get("solver", "OSQP"))
 
     clear_days_source = "unavailable"
     clean_source = "unresolved"
@@ -749,6 +751,27 @@ def run_block_a(
         "clipped_times_counts": {"true": int(clipped.sum()), "false": int((~clipped).sum())},
     }
 
+    raw_matrix = getattr(dh, "raw_data_matrix", None)
+    filled_matrix = getattr(dh, "filled_data_matrix", None)
+    day_index = getattr(dh, "day_index", None)
+    seq_index = getattr(dh, "data_frame", pd.DataFrame()).get("seq_index") if isinstance(getattr(dh, "data_frame", None), pd.DataFrame) else None
+    sdt_daily_flags = None
+    if hasattr(dh, "get_daily_flags") and callable(getattr(dh, "get_daily_flags")):
+        try:
+            flags = dh.get_daily_flags()
+            if isinstance(flags, dict):
+                sdt_daily_flags = pd.DataFrame(flags)
+            elif isinstance(flags, pd.DataFrame):
+                sdt_daily_flags = flags.copy()
+        except Exception:
+            sdt_daily_flags = None
+
+    filled_timeseries = None
+    if isinstance(filled_matrix, np.ndarray) and isinstance(day_index, pd.DatetimeIndex) and isinstance(seq_index, pd.Series):
+        reconstructed = _reconstruct_series_from_matrix(dh, matrix_attr="filled_data_matrix")
+        if reconstructed is not None:
+            filled_timeseries = reconstructed[0].to_frame(name="filled_power")
+
     return {
         "parsed": parsed,
         "ac_power_clean": ac_power_clean.to_frame(),
@@ -758,6 +781,10 @@ def run_block_a(
         "clipping_summary": clipping_summary,
         "sdt_summary": sdt_summary,
         "sdt_introspect": introspect,
+        "raw_data_matrix": pd.DataFrame(raw_matrix) if isinstance(raw_matrix, np.ndarray) else pd.DataFrame(),
+        "filled_data_matrix": pd.DataFrame(filled_matrix) if isinstance(filled_matrix, np.ndarray) else pd.DataFrame(),
+        "sdt_daily_flags": sdt_daily_flags if isinstance(sdt_daily_flags, pd.DataFrame) else pd.DataFrame(),
+        "filled_timeseries": filled_timeseries if isinstance(filled_timeseries, pd.DataFrame) else pd.DataFrame(),
     }
 
 

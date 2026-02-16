@@ -24,6 +24,7 @@ from pv_profiler.orientation import fit_orientation
 from pv_profiler.sdt_pipeline import apply_exclusion_rules, run_block_a
 from pv_profiler.shading import compute_shading
 from pv_profiler.utils import ensure_dir, utc_timestamp_label
+from pv_profiler.validation import INTERNAL_TZ
 
 LOGGER = logging.getLogger(__name__)
 
@@ -41,6 +42,35 @@ def _system_output_dir(output_root: str | Path, system_id: str, run_label: str) 
     return ensure_dir(Path(output_root) / str(system_id) / run_label)
 
 
+def _load_single_for_run_single(input_path: str, config: dict[str, Any]) -> pd.DataFrame:
+    input_cfg = config.get("input", {})
+    timestamp_col = str(input_cfg.get("timestamp_col", "timestamp"))
+    power_col = str(input_cfg.get("power_col", "ac_power"))
+    sep = str(input_cfg.get("sep", ","))
+    encoding = str(input_cfg.get("encoding", "utf-8-sig"))
+    tz_handling = str(input_cfg.get("tz_handling", "naive")).lower()
+
+    df = pd.read_csv(
+        input_path,
+        sep=sep,
+        encoding=encoding,
+        usecols=[timestamp_col, power_col],
+        low_memory=False,
+    )
+    df[timestamp_col] = pd.to_datetime(df[timestamp_col], errors="coerce")
+    df = df.dropna(subset=[timestamp_col]).set_index(timestamp_col).sort_index()
+
+    if tz_handling == "naive":
+        if df.index.tz is None:
+            df.index = df.index.tz_localize(INTERNAL_TZ)
+        else:
+            df.index = df.index.tz_convert(INTERNAL_TZ)
+
+    power_df = df[[power_col]].rename(columns={power_col: "ac_power"})
+    power_df["ac_power"] = pd.to_numeric(power_df["ac_power"], errors="coerce").fillna(0).clip(lower=0)
+    return power_df
+
+
 def process_single_system(
     system_id: str,
     df: pd.DataFrame,
@@ -48,12 +78,13 @@ def process_single_system(
     lat: float,
     lon: float,
     run_label: str,
+    sdt_power_col: str = "ac_power",
 ) -> dict[str, Any]:
     """Run full A-E pipeline for one system and write artifacts."""
     out_dir = _system_output_dir(config["paths"]["output_root"], system_id=system_id, run_label=run_label)
     power = df["ac_power"].rename("ac_power")
 
-    block_a = run_block_a(power, lat=lat, lon=lon, config=config, out_dir=out_dir)
+    block_a = run_block_a(power, lat=lat, lon=lon, power_col=sdt_power_col, config=config, out_dir=out_dir)
 
     write_parquet(block_a["parsed"], out_dir / "01_parsed_tzaware.parquet")
     write_parquet(block_a["ac_power_clean"], out_dir / "02_cleaned_timeshift_fixed.parquet")
@@ -63,6 +94,15 @@ def process_single_system(
     write_parquet(block_a["clipped_times"], out_dir / "06_clipped_times_mask.parquet")
     write_json(block_a["sdt_summary"], out_dir / "07_sdt_summary.json")
     write_json(block_a["sdt_introspect"], out_dir / "07_sdt_introspect.json")
+    if "raw_data_matrix" in block_a:
+        write_parquet(block_a["raw_data_matrix"], out_dir / "sdt_raw_data_matrix.parquet")
+    if "filled_data_matrix" in block_a:
+        write_parquet(block_a["filled_data_matrix"], out_dir / "sdt_filled_data_matrix.parquet")
+    if "sdt_daily_flags" in block_a:
+        write_csv(block_a["sdt_daily_flags"], out_dir / "sdt_daily_flags.csv")
+    if "filled_timeseries" in block_a:
+        write_parquet(block_a["filled_timeseries"], out_dir / "sdt_filled_timeseries.parquet")
+        write_csv(block_a["filled_timeseries"].reset_index(), out_dir / "sdt_filled_timeseries.csv")
 
     clip_summary = block_a["clipping_summary"]
     sdt_summary = block_a["sdt_summary"]
@@ -169,12 +209,8 @@ def run_single(
     if output_root:
         config = {**config, "paths": {**config["paths"], "output_root": output_root}}
 
-    input_cfg = config.get("input", {})
-    timestamp_col = str(input_cfg.get("timestamp_col", "timestamp"))
-    power_col = str(input_cfg.get("power_col", "ac_power"))
-
     metadata = read_plants_metadata(config["paths"]["plants_csv"])
-    df = read_single_plant(input_path, timestamp_col=timestamp_col, power_col=power_col)
+    df = _load_single_for_run_single(input_path, config)
 
     if metadata_json:
         m = read_metadata_json(metadata_json)
@@ -183,7 +219,7 @@ def run_single(
         final_lat, final_lon = _lookup_location(system_id, metadata, lat, lon)
 
     run_label = utc_timestamp_label()
-    return process_single_system(system_id, df, config, final_lat, final_lon, run_label)
+    return process_single_system(system_id, df, config, final_lat, final_lon, run_label, sdt_power_col="power")
 
 
 def run_wide(*, input_path: str, config: dict[str, Any], system_ids: list[str] | None = None) -> list[dict[str, Any]]:

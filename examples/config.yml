@@ -6,10 +6,17 @@ paths:
   plants_csv: data/processed/plants.csv
 
 input:
+  file_type: csv
+  sep: ","
+  encoding: "utf-8-sig"
   timestamp_col: timestamp
-  power_col: P_AC  # set to P_AC for SonnJA file; use ac_power for generic files
+  power_col: P_AC
+  tz_handling: naive
 
 pipeline:
+  solver: "CLARABEL"
+  fix_shifts: true
+  verbose_sdt: false
   fit_tau: 0.03
   skip_clipping: true
   clipping_threshold_day_share: 0.10
