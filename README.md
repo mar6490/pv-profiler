@@ -15,6 +15,38 @@ pv-ident run-single \
   --power-column P_AC
 ```
 
+## Block 1 separat testen (Input Loader)
+
+Wenn du **nur bis Block 1** testen willst (ohne vollständige Orientierungs-Schätzung), nutze:
+
+```bash
+pv-ident run-block1 \
+  --input-csv data/sonnja_pv3_2015/einleuchtend_wrdata_2015_wr1_5min_naive.csv \
+  --output-dir outputs/sonnja_wr1_block1 \
+  --timestamp-col timestamp \
+  --power-col P_AC
+```
+
+Erwartete Artefakte im Output-Ordner:
+- `01_input_power.parquet`
+- `01_input_diagnostics.json`
+
+Kurzcheck:
+
+```bash
+python - <<'PY'
+import json
+import pandas as pd
+
+df = pd.read_parquet("outputs/sonnja_wr1_block1/01_input_power.parquet")
+diag = json.load(open("outputs/sonnja_wr1_block1/01_input_diagnostics.json", "r", encoding="utf-8"))
+
+print(df.head())
+print(df.columns.tolist())
+print(diag["dominant_timedelta"], diag["shape"], diag["share_nan_power"])
+PY
+```
+
 Optional kann das Ergebnis in eine JSON-Datei geschrieben werden:
 
 ```bash

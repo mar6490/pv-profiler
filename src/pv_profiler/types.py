@@ -14,6 +14,29 @@ class TimeSeriesData:
 
 
 @dataclass
+class InputDiagnostics:
+    shape: tuple[int, int]
+    columns: list[str]
+    min_time: str | None
+    max_time: str | None
+    dominant_timedelta: str | None
+    sampling_summary: dict[str, int]
+    share_positive_power: float
+    share_nan_power: float
+    share_non_null_power: float
+    index_monotonic_increasing: bool
+    min_power: float | None
+    max_power: float | None
+    decisions: list[str] = field(default_factory=list)
+
+
+@dataclass
+class InputLoaderResult:
+    data: pd.DataFrame
+    diagnostics: InputDiagnostics
+
+
+@dataclass
 class OrientationResult:
     tilt: float
     azimuth: float
