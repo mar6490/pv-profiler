@@ -36,7 +36,9 @@ def main() -> int:
         )
         output = json.dumps(result.to_dict(), indent=2)
         if args.output_json:
-            Path(args.output_json).write_text(output + "\n", encoding="utf-8")
+            output_path = Path(args.output_json)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(output + "\n", encoding="utf-8")
         else:
             print(output)
         return 0

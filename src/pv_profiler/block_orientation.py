@@ -31,6 +31,7 @@ def estimate_orientation(
     ghi = clearsky["ghi"]
     dni = clearsky["dni"]
     dhi = clearsky["dhi"]
+    dni_extra = pvlib.irradiance.get_extra_radiation(power_series.index)
 
     for tilt in tilts:
         for azimuth in azimuths:
@@ -42,6 +43,7 @@ def estimate_orientation(
                 dni=dni,
                 ghi=ghi,
                 dhi=dhi,
+                dni_extra=dni_extra,
                 model="haydavies",
             )["poa_global"].clip(lower=0)
             poa_norm = poa / (poa.max() or 1.0)

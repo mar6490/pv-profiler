@@ -10,7 +10,7 @@ from .types import TimeSeriesData
 
 
 def read_power_timeseries(csv_path: str | Path, power_column: str = "P_AC") -> TimeSeriesData:
-    df = pd.read_csv(csv_path)
+    df = pd.read_csv(csv_path, low_memory=False)
     if "timestamp" not in df.columns:
         raise ValueError("Expected column 'timestamp' in CSV.")
     if power_column not in df.columns:
