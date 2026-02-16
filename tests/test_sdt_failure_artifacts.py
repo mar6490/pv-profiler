@@ -20,11 +20,11 @@ class FakeDataHandler:
     def __init__(self, df: pd.DataFrame) -> None:
         self.data_frame = df.copy()
         self.boolean_masks = FakeMasks(len(df))
-        self.filled_data_matrix = self.data_frame[["ac_power"]].to_numpy()
+        self.filled_data_matrix = self.data_frame[["power"]].to_numpy()
         self.daily_flags = SimpleNamespace(clear_day=[True])
 
-    def run_pipeline(self, power_col: str, fix_shifts: bool, verbose: bool) -> None:
-        _ = (power_col, fix_shifts, verbose)
+    def run_pipeline(self, power_col: str, fix_shifts: bool, solver: str | None = None, verbose: bool = False) -> None:
+        _ = (power_col, fix_shifts, solver, verbose)
 
     def augment_data_frame(self, values, name: str) -> None:
         import numpy as np

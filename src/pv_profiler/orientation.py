@@ -58,7 +58,11 @@ def _poa_for_orientation(
     location = pvlib.location.Location(latitude=lat, longitude=lon, tz=INTERNAL_TZ)
     solar = location.get_solarposition(times)
     clearsky = location.get_clearsky(times, model="ineichen")
-    poa = pvlib.irradiance.get_total_irradiance(
+    dni_extra = None
+    get_extra = getattr(pvlib.irradiance, "get_extra_radiation", None)
+    if callable(get_extra):
+        dni_extra = get_extra(times)
+    kwargs = dict(
         surface_tilt=tilt,
         surface_azimuth=azimuth,
         solar_zenith=solar["apparent_zenith"],
@@ -67,7 +71,14 @@ def _poa_for_orientation(
         ghi=clearsky["ghi"],
         dhi=clearsky["dhi"],
         model=transposition_model,
-    )["poa_global"]
+    )
+    if dni_extra is not None:
+        kwargs["dni_extra"] = dni_extra
+    try:
+        poa = pvlib.irradiance.get_total_irradiance(**kwargs)["poa_global"]
+    except TypeError:
+        kwargs.pop("dni_extra", None)
+        poa = pvlib.irradiance.get_total_irradiance(**kwargs)["poa_global"]
     return poa.rename("poa_global")
 
 
@@ -97,29 +108,41 @@ def fit_orientation(
     obs_raw = ac_power_clean.astype(float)
     obs_norm = _normalize_daily_q995(obs_raw)
     times = ac_power_clean.index
+    max_eval_points = int(cfg.get("max_eval_points", 3000))
+
+    eval_mask = mask.copy()
+    n_mask = int(eval_mask.sum())
+    if n_mask > max_eval_points > 0:
+        stride = int(np.ceil(n_mask / max_eval_points))
+        selected = np.flatnonzero(eval_mask.to_numpy())[::stride]
+        eval_mask = pd.Series(False, index=mask.index)
+        eval_mask.iloc[selected] = True
+
+    eval_times = times[eval_mask]
+    eval_obs_raw = obs_raw[eval_mask]
+    eval_obs_norm = obs_norm[eval_mask]
 
     candidates: list[dict[str, Any]] = []
     best_single: dict[str, Any] | None = None
 
     def evaluate_single(tilt: float, azimuth: float) -> dict[str, Any]:
-        poa = _poa_for_orientation(times, lat, lon, tilt, azimuth, transposition_model)
-        sel = mask & poa.notna() & obs_raw.notna()
-        s = _fit_scale(obs_raw[sel].values, poa[sel].values) if sel.any() else 0.0
+        poa = _poa_for_orientation(eval_times, lat, lon, tilt, azimuth, transposition_model)
+        sel = poa.notna() & eval_obs_raw.notna()
+        s = _fit_scale(eval_obs_raw[sel].values, poa[sel].values) if sel.any() else 0.0
         pred_norm = _normalize_daily_q995((s * poa).rename("pred"))
-        score = _compute_loss(obs_norm[mask], pred_norm[mask], loss_mode)
+        score = _compute_loss(eval_obs_norm, pred_norm.reindex(eval_obs_norm.index), loss_mode)
         return {
             "model_type": "single",
             "tilt_deg": float(tilt),
             "azimuth_deg": float(azimuth),
             "score_rmse": float(score),
             "scale": float(s),
-            "poa": poa,
         }
 
     for tilt in np.arange(0, 60 + coarse_tilt_step, coarse_tilt_step):
         for azimuth in np.arange(az_min, az_max + coarse_az_step, coarse_az_step):
             result = evaluate_single(float(tilt), float(azimuth))
-            candidates.append({k: v for k, v in result.items() if k != "poa"})
+            candidates.append(dict(result))
             if best_single is None or result["score_rmse"] < best_single["score_rmse"]:
                 best_single = result
 
@@ -130,25 +153,25 @@ def fit_orientation(
     for tilt in np.arange(max(0, t0 - 5), min(60, t0 + 5) + refine_tilt_step, refine_tilt_step):
         for azimuth in np.arange(max(az_min, a0 - 10), min(az_max, a0 + 10) + refine_az_step, refine_az_step):
             result = evaluate_single(float(tilt), float(azimuth))
-            candidates.append({k: v for k, v in result.items() if k != "poa"})
+            candidates.append(dict(result))
             if result["score_rmse"] < best_single["score_rmse"]:
                 best_single = result
 
     best_two: dict[str, Any] | None = None
     if enable_two_plane:
         for tilt in np.arange(0, 60 + coarse_tilt_step, coarse_tilt_step):
-            poa_e = _poa_for_orientation(times, lat, lon, float(tilt), 90.0, transposition_model)
-            poa_w = _poa_for_orientation(times, lat, lon, float(tilt), 270.0, transposition_model)
-            sel = mask & poa_e.notna() & poa_w.notna() & obs_raw.notna()
+            poa_e = _poa_for_orientation(eval_times, lat, lon, float(tilt), 90.0, transposition_model)
+            poa_w = _poa_for_orientation(eval_times, lat, lon, float(tilt), 270.0, transposition_model)
+            sel = poa_e.notna() & poa_w.notna() & eval_obs_raw.notna()
             if not sel.any():
                 continue
             X = np.column_stack([poa_e[sel].values, poa_w[sel].values])
-            y = obs_raw[sel].values
+            y = eval_obs_raw[sel].values
             coeffs, *_ = np.linalg.lstsq(X, y, rcond=None)
             s_e, s_w = [float(max(0.0, x)) for x in coeffs]
             pred_raw = s_e * poa_e + s_w * poa_w
             pred_norm = _normalize_daily_q995(pred_raw)
-            score = _compute_loss(obs_norm[mask], pred_norm[mask], loss_mode)
+            score = _compute_loss(eval_obs_norm, pred_norm.reindex(eval_obs_norm.index), loss_mode)
             item = {
                 "model_type": "two-plane",
                 "tilt_deg": float(tilt),
@@ -182,6 +205,7 @@ def fit_orientation(
         "score_rmse": float(best["score_rmse"]),
         "n_fit_points": n_fit_points,
         "n_fit_days": n_fit_days,
+        "n_eval_points": int(eval_mask.sum()),
         "grid_coarse_step": {"tilt": coarse_tilt_step, "azimuth": coarse_az_step},
         "grid_refine_step": {"tilt": refine_tilt_step, "azimuth": refine_az_step},
         "az_min": az_min,
@@ -198,8 +222,15 @@ def fit_orientation(
         result["sW"] = float(best["sW"])
         result["ew_ratio"] = float(best["ew_ratio"]) if np.isfinite(best["ew_ratio"]) else None
 
+    if best["model_type"] == "single":
+        best_poa_full = _poa_for_orientation(times, lat, lon, float(best["tilt_deg"]), float(best["azimuth_deg"]), transposition_model)
+    else:
+        poa_e_full = _poa_for_orientation(times, lat, lon, float(best["tilt_deg"]), 90.0, transposition_model)
+        poa_w_full = _poa_for_orientation(times, lat, lon, float(best["tilt_deg"]), 270.0, transposition_model)
+        best_poa_full = float(best.get("sE", 0.0)) * poa_e_full + float(best.get("sW", 0.0)) * poa_w_full
+
     diagnostics = pd.DataFrame(candidates)
     if not diagnostics.empty:
         diagnostics = diagnostics.sort_values("score_rmse", ascending=True).head(top_n)
 
-    return OrientationFitArtifacts(result=result, diagnostics=diagnostics, poa_unshaded=best["poa"].rename("poa_cs"))
+    return OrientationFitArtifacts(result=result, diagnostics=diagnostics, poa_unshaded=best_poa_full.rename("poa_cs"))

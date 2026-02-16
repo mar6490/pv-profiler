@@ -51,6 +51,24 @@ def read_single_plant(path: str | Path, timestamp_col: str = "timestamp", power_
     return out
 
 
+def read_single_plant_notebook_csv(path: str | Path) -> pd.DataFrame:
+    """Load known-good SDT CSV exactly like the notebook reference."""
+    df = pd.read_csv(
+        path,
+        sep=",",
+        quotechar='"',
+        encoding="utf-8-sig",
+        usecols=["timestamp", "P_AC"],
+        low_memory=False,
+    )
+    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+    df = df.dropna(subset=["timestamp"]).set_index("timestamp").sort_index()
+
+    power = df[["P_AC"]].rename(columns={"P_AC": "ac_power"})
+    power["ac_power"] = pd.to_numeric(power["ac_power"], errors="coerce").fillna(0).clip(lower=0)
+    return power
+
+
 def read_wide_plants(path: str | Path, timestamp_col: str = "timestamp") -> pd.DataFrame:
     """Load wide multi-system file and validate the shared timestamp index."""
     df = _read_table(path)

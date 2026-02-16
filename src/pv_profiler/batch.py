@@ -14,6 +14,7 @@ from pv_profiler.io import (
     read_metadata_json,
     read_plants_metadata,
     read_single_plant,
+    read_single_plant_notebook_csv,
     read_wide_plants,
     write_csv,
     write_json,
@@ -83,6 +84,16 @@ def process_single_system(
         is_clipped_time=block_a["clipped_times"]["is_clipped_time"],
         tau=tau,
     )
+    if int(fit_mask.sum()) == 0:
+        LOGGER.warning("compute_fit_mask returned no fit points; falling back to SDT fit_times mask")
+        fit_mask = block_a["fit_times"]["is_fit_time"].reindex(p_norm.index).fillna(False).astype(bool)
+        local_dates = pd.Index(p_norm.index.tz_convert("Etc/GMT-1").date)
+        daily_fit_fraction = (
+            pd.DataFrame({"date": local_dates, "fit_mask": fit_mask.astype(int)})
+            .groupby("date", as_index=False)["fit_mask"]
+            .mean()
+            .rename(columns={"fit_mask": "daily_fit_fraction"})
+        )
     write_parquet(fit_mask.to_frame(), out_dir / "11_fit_mask.parquet")
     write_csv(daily_fit_fraction, out_dir / "12_daily_fit_fraction.csv")
 
@@ -174,7 +185,10 @@ def run_single(
     power_col = str(input_cfg.get("power_col", "ac_power"))
 
     metadata = read_plants_metadata(config["paths"]["plants_csv"])
-    df = read_single_plant(input_path, timestamp_col=timestamp_col, power_col=power_col)
+    if Path(input_path).suffix.lower() == ".csv":
+        df = read_single_plant_notebook_csv(input_path)
+    else:
+        df = read_single_plant(input_path, timestamp_col=timestamp_col, power_col=power_col)
 
     if metadata_json:
         m = read_metadata_json(metadata_json)
