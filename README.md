@@ -47,6 +47,35 @@ print(diag["dominant_timedelta"], diag["shape"], diag["share_nan_power"])
 PY
 ```
 
+## Block 2 separat testen (SDT Onboarding + Artefakte)
+
+### Variante A: aus Block-1-Parquet
+
+```bash
+pv-ident run-block2 \
+  --input-parquet outputs/sonnja_wr1_block1/01_input_power.parquet \
+  --output-dir outputs/sonnja_wr1_block2 \
+  --solver CLARABEL
+```
+
+### Variante B: direkt aus CSV (führt Block 1 intern aus)
+
+```bash
+pv-ident run-block2 \
+  --input-csv data/sonnja_pv3_2015/einleuchtend_wrdata_2015_wr1_5min_naive.csv \
+  --output-dir outputs/sonnja_wr1_block2 \
+  --timestamp-col timestamp \
+  --csv-power-col P_AC \
+  --solver CLARABEL
+```
+
+Erwartete Block-2-Artefakte (sofern vorhanden):
+- `02_sdt_report.json`
+- `02_sdt_daily_flags.csv`
+- `02_sdt_raw_data_matrix.parquet`
+- `02_sdt_filled_data_matrix.parquet`
+- `02_sdt_error.json` (nur bei Fehler/Teilfehler)
+
 Optional kann das Ergebnis in eine JSON-Datei geschrieben werden:
 
 ```bash

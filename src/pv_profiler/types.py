@@ -37,6 +37,19 @@ class InputLoaderResult:
 
 
 @dataclass
+class SdtBlockResult:
+    status: str
+    solver: str
+    fix_shifts: bool
+    report: dict[str, Any] | None = None
+    raw_data_matrix: pd.DataFrame | None = None
+    filled_data_matrix: pd.DataFrame | None = None
+    daily_flags: pd.DataFrame | None = None
+    error: dict[str, Any] | None = None
+    message: str | None = None
+
+
+@dataclass
 class OrientationResult:
     tilt: float
     azimuth: float

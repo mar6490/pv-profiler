@@ -4,7 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
-from .pipeline import run_block1_input_loader, run_single
+from .pipeline import run_block1_input_loader, run_block2_sdt_from_csv, run_block2_sdt_from_parquet, run_single
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -42,6 +42,33 @@ def build_parser() -> argparse.ArgumentParser:
         "--keep-negative-power",
         action="store_true",
         help="Keep negative power values instead of clipping to zero",
+    )
+
+    block2_parser = sub.add_parser("run-block2", help="Run SDT onboarding (Block 2) and write artifacts")
+    source = block2_parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--input-parquet", help="Path to 01_input_power.parquet from Block 1")
+    source.add_argument("--input-csv", help="Raw CSV input (will run Block 1 internally before Block 2)")
+    block2_parser.add_argument("--output-dir", required=True, help="Directory for Block 2 artifacts")
+    block2_parser.add_argument("--solver", default="CLARABEL", help="SDT solver passed to DataHandler.run_pipeline")
+    block2_parser.add_argument(
+        "--no-fix-shifts",
+        action="store_true",
+        help="Disable SDT timestamp shift correction",
+    )
+    block2_parser.add_argument("--power-col", default="power", help="Power column for parquet input")
+    block2_parser.add_argument("--timestamp-col", default="timestamp", help="Timestamp column for CSV input")
+    block2_parser.add_argument("--csv-power-col", default="P_AC", help="Power column for CSV input")
+    block2_parser.add_argument("--timezone", default=None, help="Optional timezone for CSV input")
+    block2_parser.add_argument("--min-samples", type=int, default=288, help="Minimum samples for Block 1 CSV path")
+    block2_parser.add_argument(
+        "--no-resample",
+        action="store_true",
+        help="Fail on irregular sampling in Block 1 CSV path",
+    )
+    block2_parser.add_argument(
+        "--keep-negative-power",
+        action="store_true",
+        help="Keep negative power values in Block 1 CSV path",
     )
 
     return parser
@@ -86,6 +113,47 @@ def main() -> int:
             "share_nan_power": result.diagnostics.share_nan_power,
         }
         print(json.dumps(summary, indent=2))
+        return 0
+
+    if args.command == "run-block2":
+        fix_shifts = not args.no_fix_shifts
+        if args.input_parquet:
+            result = run_block2_sdt_from_parquet(
+                input_parquet=args.input_parquet,
+                output_dir=args.output_dir,
+                solver=args.solver,
+                fix_shifts=fix_shifts,
+                power_col=args.power_col,
+            )
+        else:
+            result = run_block2_sdt_from_csv(
+                input_csv=args.input_csv,
+                output_dir=args.output_dir,
+                timestamp_col=args.timestamp_col,
+                power_col=args.csv_power_col,
+                timezone=args.timezone,
+                resample_if_irregular=not args.no_resample,
+                min_samples=args.min_samples,
+                clip_negative_power=not args.keep_negative_power,
+                solver=args.solver,
+                fix_shifts=fix_shifts,
+            )
+
+        print(
+            json.dumps(
+                {
+                    "status": result.status,
+                    "solver": result.solver,
+                    "fix_shifts": result.fix_shifts,
+                    "has_report": result.report is not None,
+                    "has_daily_flags": result.daily_flags is not None and not result.daily_flags.empty,
+                    "has_raw_data_matrix": result.raw_data_matrix is not None,
+                    "has_filled_data_matrix": result.filled_data_matrix is not None,
+                    "has_error": result.error is not None,
+                },
+                indent=2,
+            )
+        )
         return 0
 
     parser.error(f"Unknown command: {args.command}")
