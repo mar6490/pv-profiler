@@ -14,7 +14,14 @@ class _FakeDataHandler:
         self.data_frame = data_frame
         self.raw_data_matrix = [[1.0, 2.0], [3.0, 4.0]]
         self.filled_data_matrix = [[1.1, 2.1], [3.1, 4.1]]
-        self.daily_flags = {"clear": [True, False], "density": [False, True]}
+        class DailyFlags:
+            def __init__(self):
+                self.clear = [True, False]
+                self.cloudy = [False, True]
+                self.no_errors = [True, True]
+                self.density = [False, True]
+
+        self.daily_flags = DailyFlags()
 
     def run_pipeline(self, power_col: str, fix_shifts: bool, solver: str):
         assert power_col == "power"
@@ -49,6 +56,11 @@ def test_run_block2_sdt_writes_report_and_daily_flags(monkeypatch, tmp_path):
     assert Path(written["daily_flags"]).exists()
     assert Path(written["raw_data_matrix"]).exists()
     assert Path(written["filled_data_matrix"]).exists()
+
+    flags = pd.read_csv(Path(written["daily_flags"]), index_col=0)
+    assert {"clear", "cloudy", "no_errors"}.issubset(set(flags.columns))
+    assert result.raw_data_matrix is not None
+    assert flags.shape[0] == result.raw_data_matrix.shape[1]
 
 
 def test_run_block2_sdt_memoryerror_writes_error(monkeypatch, tmp_path):

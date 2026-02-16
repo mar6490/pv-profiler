@@ -45,26 +45,26 @@ def _daily_flags_to_frame(dh: Any) -> pd.DataFrame:
         return flags.copy()
 
     if isinstance(flags, dict):
-        normalized: dict[str, Any] = {}
-        max_len = 0
-        for key, value in flags.items():
-            if isinstance(value, (pd.Series, np.ndarray, list, tuple)):
-                col = pd.Series(value)
-            else:
-                col = pd.Series([value])
-            normalized[str(key)] = col
-            max_len = max(max_len, len(col))
+        source = flags
+    else:
+        source = getattr(flags, "__dict__", {})
 
-        if not normalized:
-            return pd.DataFrame()
+    if not source:
+        return pd.DataFrame()
 
-        frame = pd.DataFrame({k: v.reindex(range(max_len)).to_numpy() for k, v in normalized.items()})
-        day_index = getattr(dh, "day_index", None)
-        if isinstance(day_index, pd.Index) and len(day_index) == len(frame):
-            frame.index = day_index
+    try:
+        frame = pd.DataFrame(source)
+    except ValueError:
+        normalized = {k: pd.Series(v) for k, v in source.items()}
+        frame = pd.DataFrame(normalized)
+    if frame.empty:
         return frame
 
-    return pd.DataFrame()
+    frame = frame.reindex(sorted(frame.columns), axis=1)
+    day_index = getattr(dh, "day_index", None)
+    if isinstance(day_index, pd.Index) and len(day_index) == len(frame):
+        frame.index = day_index
+    return frame
 
 
 def run_block2_sdt(
