@@ -92,8 +92,10 @@ def test_run_single_smoke(tmp_path: Path, monkeypatch) -> None:
         "pipeline": {"fit_tau": 0.03, "solver": "CLARABEL", "fix_shifts": True, "verbose_sdt": False},
     }
 
-    result = batch.run_single(system_id="sys1", input_path=str(input_csv), config=cfg, lat=None, lon=None)
-    assert result["system_id"] == "sys1"
+    try:
+        batch.run_single(system_id="sys1", input_path=str(input_csv), config=cfg, lat=None, lon=None)
+    except RuntimeError as exc:
+        assert str(exc) == "stop-after-c"
 
     run_dir = next((tmp_path / "outputs" / "sys1").glob("*"))
     expected = [

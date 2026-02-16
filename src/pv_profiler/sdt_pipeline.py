@@ -478,12 +478,84 @@ def run_clipping_detection_safe(dh: object, solver: str) -> tuple[np.ndarray | N
         LOGGER.warning("SDT clipping detection failed: %s", exc)
         return None, str(exc)
 
+def get_clear_day_flags(dh: object) -> tuple[np.ndarray | None, str]:
+    matrix = getattr(dh, "filled_data_matrix", None)
+    if hasattr(matrix, "shape") and len(matrix.shape) == 2:
+        n_days = int(matrix.shape[1])
+    else:
+        day_index = getattr(dh, "day_index", None)
+        n_days = int(len(day_index)) if isinstance(day_index, pd.DatetimeIndex) else 0
+    if n_days <= 0:
+        return None, "unavailable"
+
+    keys = ("clear", "clear_day", "clear_days", "clear_sky", "is_clear")
+
+    get_daily_flags = getattr(dh, "get_daily_flags", None)
+    if callable(get_daily_flags):
+        try:
+            flags = get_daily_flags()
+            if isinstance(flags, dict):
+                for key in keys:
+                    if key in flags:
+                        arr = _coerce_bool_day_flags(flags[key], n_days)
+                        if arr is not None:
+                            return arr, f"sdt:get_daily_flags:{key}"
+            if isinstance(flags, pd.DataFrame):
+                for key in keys:
+                    if key in flags.columns:
+                        arr = _coerce_bool_day_flags(flags[key].to_numpy(), n_days)
+                        if arr is not None:
+                            return arr, f"sdt:get_daily_flags:{key}"
+            if isinstance(flags, pd.Series):
+                arr = _coerce_bool_day_flags(flags.to_numpy(), n_days)
+                if arr is not None:
+                    return arr, "sdt:get_daily_flags:series"
+        except Exception as exc:
+            LOGGER.warning("get_daily_flags failed during clear-day extraction: %s", exc)
+
+    daily_flags = getattr(dh, "daily_flags", None)
+    if daily_flags is not None:
+        try:
+            attrs = vars(daily_flags)
+        except Exception:
+            attrs = {}
+        for key in keys:
+            if key in attrs:
+                arr = _coerce_bool_day_flags(attrs[key], n_days)
+                if arr is not None:
+                    return arr, f"sdt:daily_flags:{key}"
+        for key, val in attrs.items():
+            arr = _coerce_bool_day_flags(val, n_days)
+            if arr is not None:
+                return arr, f"sdt:daily_flags:{key}"
+
+    return None, "unavailable"
+
+
+def _build_fit_times(dh: object) -> tuple[pd.Series, str, int, float]:
     bm = getattr(dh, "boolean_masks", None)
     clipped = getattr(bm, "clipped_times", None) if bm is not None else None
     if isinstance(clipped, np.ndarray):
         return clipped, None
     return None, "clipped_times_not_generated"
 
+    daytime = np.asarray(getattr(bm, "daytime"), dtype=bool)
+    n_rows, n_days = daytime.shape
+
+    if clear_days is not None and clear_days.size == n_days:
+        fit_times_2d = daytime & clear_days[None, :]
+        clear_days_source = source.replace("sdt:get_daily_flags", "sdt:daily_flags")
+    else:
+        fit_times_2d = daytime
+        clear_days = np.zeros(n_days, dtype=bool)
+        clear_days_source = "fallback:daytime_only"
+        LOGGER.warning("No clear-day flags available, using daytime-only fit mask")
+
+    fit_series = _augment_mask_to_data_frame(dh, fit_times_2d, "is_fit_time")
+    fit_series = fit_series.astype(bool)
+    n_clear_days = int(np.count_nonzero(clear_days))
+    clear_day_fraction = float(n_clear_days / max(n_days, 1))
+    return fit_series, clear_days_source, n_clear_days, clear_day_fraction
 
 def _build_fit_times(dh: object, solver: str) -> tuple[pd.Series, str, int, float]:
     bm = getattr(dh, "boolean_masks", None)
