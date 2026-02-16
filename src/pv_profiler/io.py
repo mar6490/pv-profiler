@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 from pv_profiler.validation import parse_and_validate_timestamp_index, validate_power_series, validate_regular_sampling
@@ -128,10 +130,33 @@ def write_parquet(df: pd.DataFrame | pd.Series, path: str | Path) -> None:
     frame.to_parquet(p)
 
 
+def to_jsonable(obj: Any) -> Any:
+    if obj is None or isinstance(obj, (str, int, float, bool)):
+        return obj
+    if isinstance(obj, Path):
+        return str(obj)
+    if isinstance(obj, (datetime, date, pd.Timestamp)):
+        return obj.isoformat()
+    if isinstance(obj, np.generic):
+        return to_jsonable(obj.item())
+    if isinstance(obj, np.ndarray):
+        return [to_jsonable(v) for v in obj.tolist()]
+    if isinstance(obj, pd.Series):
+        return [to_jsonable(v) for v in obj.to_list()]
+    if isinstance(obj, pd.DataFrame):
+        return {str(k): to_jsonable(v) for k, v in obj.to_dict(orient="list").items()}
+    if isinstance(obj, dict):
+        return {str(k): to_jsonable(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple, set)):
+        return [to_jsonable(v) for v in obj]
+    return str(obj)
+
+
 def write_json(payload: dict, path: str | Path) -> None:
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    payload2 = to_jsonable(payload)
+    p.write_text(json.dumps(payload2, indent=2, sort_keys=True, ensure_ascii=False), encoding="utf-8")
 
 
 def write_csv(df: pd.DataFrame, path: str | Path) -> None:
