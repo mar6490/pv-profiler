@@ -9,6 +9,7 @@ from .pipeline import (
     run_block2_sdt_from_csv,
     run_block2_sdt_from_parquet,
     run_block3_from_files,
+    run_block4_from_files,
     run_single,
 )
 
@@ -88,6 +89,31 @@ def build_parser() -> argparse.ArgumentParser:
         help="How to build fit time series",
     )
     block3_parser.add_argument("--min-fit-days", type=int, default=10, help="Minimum required fit days")
+
+    block4_parser = sub.add_parser("run-block4", help="Run daily peak quantile normalization (Block 4)")
+    block4_parser.add_argument("--input-power-fit-parquet", required=True, help="Path to 05_power_fit.parquet")
+    block4_parser.add_argument("--output-dir", required=True, help="Directory for Block 4 artifacts")
+    block4_parser.add_argument("--quantile", type=float, default=0.995, help="Daily peak quantile")
+    block4_parser.add_argument(
+        "--min-fit-samples-day",
+        type=int,
+        default=1,
+        help="Minimum non-null fit samples required per day",
+    )
+    dropna_group = block4_parser.add_mutually_exclusive_group()
+    dropna_group.add_argument(
+        "--dropna-output",
+        dest="dropna_output",
+        action="store_true",
+        help="Write only non-null normalized samples (default)",
+    )
+    dropna_group.add_argument(
+        "--keep-nan-output",
+        dest="dropna_output",
+        action="store_false",
+        help="Keep full timeline including NaN normalized samples",
+    )
+    block4_parser.set_defaults(dropna_output=True)
 
     return parser
 
@@ -191,6 +217,27 @@ def main() -> int:
                     "n_days_total": result.n_days_total,
                     "n_unmatched_days": result.n_unmatched_days,
                     "fit_mode": result.fit_mode,
+                },
+                indent=2,
+            )
+        )
+        return 0
+
+    if args.command == "run-block4":
+        result = run_block4_from_files(
+            input_power_fit_parquet=args.input_power_fit_parquet,
+            output_dir=args.output_dir,
+            quantile=args.quantile,
+            min_fit_samples_day=args.min_fit_samples_day,
+            dropna_output=args.dropna_output,
+        )
+        print(
+            json.dumps(
+                {
+                    "quantile_used": result.quantile,
+                    "min_fit_samples_day": result.min_fit_samples_day,
+                    "dropna_output": result.dropna_output,
+                    "n_samples_norm_total": int(result.diagnostics.get("n_samples_norm_total", 0)),
                 },
                 indent=2,
             )

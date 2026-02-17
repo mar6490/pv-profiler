@@ -91,6 +91,24 @@ Erwartete Artefakte:
 - Gate fail: `03_fit_status.json` (+ optional `03_fit_days.csv`), **kein** `05_power_fit.parquet`
 - Gate pass: `03_fit_days.csv`, `04_fit_mask_summary.json`, `05_power_fit.parquet`
 
+## Block 4 separat testen (Daily Peak Quantile Normalisierung)
+
+```bash
+pv-ident run-block4 \
+  --input-power-fit-parquet outputs/sonnja_wr1_block3/05_power_fit.parquet \
+  --output-dir outputs/sonnja_wr1_block4 \
+  --quantile 0.995 \
+  --min-fit-samples-day 1 \
+  --dropna-output
+```
+
+Erwartete Artefakte:
+- `06_daily_peak.csv`
+- `07_p_norm_clear.parquet`
+- `07_p_norm_diagnostics.json`
+
+Hinweis: Es wird ein hohes Tages-Quantil (statt Tages-Maximum) genutzt, um Ausreißer-Spitzen robuster zu behandeln.
+
 Optional kann das Ergebnis in eine JSON-Datei geschrieben werden:
 
 ```bash

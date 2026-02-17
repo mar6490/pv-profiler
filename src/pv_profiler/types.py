@@ -75,6 +75,16 @@ class Block3Result:
 
 
 @dataclass
+class NormalizationResult:
+    daily_peak: pd.DataFrame
+    p_norm: pd.DataFrame
+    diagnostics: dict[str, Any]
+    quantile: float
+    min_fit_samples_day: int
+    dropna_output: bool
+
+
+@dataclass
 class OrientationResult:
     tilt: float
     azimuth: float
