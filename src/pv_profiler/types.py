@@ -50,6 +50,31 @@ class SdtBlockResult:
 
 
 @dataclass
+class Block3Result:
+    status: str
+    n_fit_days: int
+    min_required_fit_days: int
+    n_days_total: int
+    n_unmatched_days: int
+    rule_used: str
+    fit_mode: str
+    fit_days_df: pd.DataFrame | None = None
+    power_fit_df: pd.DataFrame | None = None
+
+    @property
+    def n_samples_total(self) -> int:
+        if self.power_fit_df is None:
+            return 0
+        return int(self.power_fit_df.shape[0])
+
+    @property
+    def n_samples_fit(self) -> int:
+        if self.power_fit_df is None:
+            return 0
+        return int(self.power_fit_df["power"].notna().sum())
+
+
+@dataclass
 class OrientationResult:
     tilt: float
     azimuth: float

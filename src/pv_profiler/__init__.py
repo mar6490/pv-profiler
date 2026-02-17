@@ -5,6 +5,7 @@ from .pipeline import (
     run_block2_sdt_from_csv,
     run_block2_sdt_from_df,
     run_block2_sdt_from_parquet,
+    run_block3_from_files,
     run_single,
 )
 
@@ -14,4 +15,5 @@ __all__ = [
     "run_block2_sdt_from_df",
     "run_block2_sdt_from_parquet",
     "run_block2_sdt_from_csv",
+    "run_block3_from_files",
 ]

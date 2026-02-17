@@ -76,6 +76,21 @@ Erwartete Block-2-Artefakte (sofern vorhanden):
 - `02_sdt_filled_data_matrix.parquet`
 - `02_sdt_error.json` (nur bei Fehler/Teilfehler)
 
+## Block 3 separat testen (Fit-Day Auswahl, ohne Normalisierung)
+
+```bash
+pv-ident run-block3 \
+  --input-power-parquet outputs/sonnja_wr1_block1/01_input_power.parquet \
+  --input-daily-flags-csv outputs/sonnja_wr1_block2/02_sdt_daily_flags.csv \
+  --output-dir outputs/sonnja_wr1_block3 \
+  --fit-mode mask_to_nan \
+  --min-fit-days 10
+```
+
+Erwartete Artefakte:
+- Gate fail: `03_fit_status.json` (+ optional `03_fit_days.csv`), **kein** `05_power_fit.parquet`
+- Gate pass: `03_fit_days.csv`, `04_fit_mask_summary.json`, `05_power_fit.parquet`
+
 Optional kann das Ergebnis in eine JSON-Datei geschrieben werden:
 
 ```bash

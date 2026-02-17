@@ -4,7 +4,13 @@ import argparse
 import json
 from pathlib import Path
 
-from .pipeline import run_block1_input_loader, run_block2_sdt_from_csv, run_block2_sdt_from_parquet, run_single
+from .pipeline import (
+    run_block1_input_loader,
+    run_block2_sdt_from_csv,
+    run_block2_sdt_from_parquet,
+    run_block3_from_files,
+    run_single,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -70,6 +76,18 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Keep negative power values in Block 1 CSV path",
     )
+
+    block3_parser = sub.add_parser("run-block3", help="Run fit-day selection (Block 3)")
+    block3_parser.add_argument("--input-power-parquet", required=True, help="Path to 01_input_power.parquet")
+    block3_parser.add_argument("--input-daily-flags-csv", required=True, help="Path to 02_sdt_daily_flags.csv")
+    block3_parser.add_argument("--output-dir", required=True, help="Directory for Block 3 artifacts")
+    block3_parser.add_argument(
+        "--fit-mode",
+        choices=["mask_to_nan", "filter_rows"],
+        default="mask_to_nan",
+        help="How to build fit time series",
+    )
+    block3_parser.add_argument("--min-fit-days", type=int, default=10, help="Minimum required fit days")
 
     return parser
 
@@ -150,6 +168,29 @@ def main() -> int:
                     "has_raw_data_matrix": result.raw_data_matrix is not None,
                     "has_filled_data_matrix": result.filled_data_matrix is not None,
                     "has_error": result.error is not None,
+                },
+                indent=2,
+            )
+        )
+        return 0
+
+    if args.command == "run-block3":
+        result = run_block3_from_files(
+            input_power_parquet=args.input_power_parquet,
+            input_daily_flags_csv=args.input_daily_flags_csv,
+            output_dir=args.output_dir,
+            fit_mode=args.fit_mode,
+            min_fit_days=args.min_fit_days,
+        )
+        print(
+            json.dumps(
+                {
+                    "status": result.status,
+                    "n_fit_days": result.n_fit_days,
+                    "min_required_fit_days": result.min_required_fit_days,
+                    "n_days_total": result.n_days_total,
+                    "n_unmatched_days": result.n_unmatched_days,
+                    "fit_mode": result.fit_mode,
                 },
                 indent=2,
             )

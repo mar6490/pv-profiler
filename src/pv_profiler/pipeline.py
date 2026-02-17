@@ -5,10 +5,11 @@ from pathlib import Path
 import pandas as pd
 
 from .block_diagnostics import compute_diagnostics
+from .block_fit import load_daily_flags, run_block3_fit_selection, write_block3_artifacts
 from .block_io import load_input_for_sdt, read_metadata, read_power_timeseries, write_input_loader_artifacts
 from .block_orientation import estimate_orientation
 from .block_sdt import run_block2_sdt, run_sdt_onboarding, write_block2_artifacts
-from .types import InputLoaderResult, RunSingleResult, SdtBlockResult
+from .types import Block3Result, InputLoaderResult, RunSingleResult, SdtBlockResult
 
 
 def run_block1_input_loader(
@@ -128,3 +129,23 @@ def run_block2_sdt_from_csv(
         fix_shifts=fix_shifts,
         power_col="power",
     )
+
+
+def run_block3_from_files(
+    input_power_parquet: str | Path,
+    input_daily_flags_csv: str | Path,
+    output_dir: str | Path,
+    *,
+    fit_mode: str = "mask_to_nan",
+    min_fit_days: int = 10,
+) -> Block3Result:
+    power_df = pd.read_parquet(input_power_parquet)
+    flags_df = load_daily_flags(input_daily_flags_csv)
+    result = run_block3_fit_selection(
+        power_df=power_df,
+        daily_flags_df=flags_df,
+        fit_mode=fit_mode,
+        min_fit_days=min_fit_days,
+    )
+    write_block3_artifacts(result, output_dir=output_dir)
+    return result
