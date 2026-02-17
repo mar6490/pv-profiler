@@ -77,7 +77,8 @@ def run_block4_normalize_from_parquet(
     pnorm_path = out_dir / "07_p_norm_clear.parquet"
     diagnostics_path = out_dir / "07_p_norm_diagnostics.json"
 
-    daily_peak_out = daily_peak.reset_index().rename(columns={"index": "date"})
+    daily_peak_out = daily_peak.reset_index()
+    daily_peak_out = daily_peak_out.rename(columns={daily_peak_out.columns[0]: "date"})
     daily_peak_out["date"] = pd.to_datetime(daily_peak_out["date"]).dt.strftime("%Y-%m-%d")
     daily_peak_out.to_csv(daily_peak_path, index=False)
     p_norm_out.to_parquet(pnorm_path, index=True)

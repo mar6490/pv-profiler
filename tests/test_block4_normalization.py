@@ -70,3 +70,25 @@ def test_dropna_output_only_non_null(tmp_path):
 
     out = pd.read_parquet(out_dir / "07_p_norm_clear.parquet")
     assert out["p_norm"].notna().all()
+
+
+def test_daily_peak_csv_has_date_column_with_iso_format_for_named_index(tmp_path):
+    idx = pd.date_range("2015-01-01", periods=6, freq="5min")
+    df = pd.DataFrame({"power": [1.0, 2.0, 1.5, 2.5, 1.8, 2.2]}, index=idx)
+    df.index.name = "timestamp"
+
+    p = tmp_path / "05_power_fit.parquet"
+    df.to_parquet(p)
+
+    out_dir = tmp_path / "out"
+    run_block4_normalize_from_parquet(
+        input_power_fit_parquet=p,
+        output_dir=out_dir,
+        quantile=0.995,
+        min_fit_samples_day=1,
+        dropna_output=True,
+    )
+
+    daily_peak_csv = pd.read_csv(out_dir / "06_daily_peak.csv")
+    assert "date" in daily_peak_csv.columns
+    assert daily_peak_csv["date"].astype(str).str.fullmatch(r"\d{4}-\d{2}-\d{2}").all()
