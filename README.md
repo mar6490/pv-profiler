@@ -109,6 +109,24 @@ Erwartete Artefakte:
 
 Hinweis: Es wird ein hohes Tages-Quantil (statt Tages-Maximum) genutzt, um Ausreißer-Spitzen robuster zu behandeln.
 
+## Block 5 separat testen (Orientierungsschätzung single + two-plane)
+
+```bash
+pv-ident run-block5 \
+  --input-p-norm-parquet outputs/sonnja_wr1_block4/07_p_norm_clear.parquet \
+  --output-dir outputs/sonnja_wr1_block5 \
+  --latitude 52.45544 \
+  --longitude 13.52481 \
+  --quantile 0.995 \
+  --norm-mode quantile \
+  --fit-target median
+```
+
+Erwartete Artefakte:
+- `08_orientation_result.json`
+- `09_orientation_topk.csv`
+- optional `10_profile_compare.csv`
+
 Optional kann das Ergebnis in eine JSON-Datei geschrieben werden:
 
 ```bash

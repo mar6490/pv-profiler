@@ -8,6 +8,7 @@ from .block_diagnostics import compute_diagnostics
 from .block_fit import load_daily_flags, run_block3_fit_selection, write_block3_artifacts
 from .block_io import load_input_for_sdt, read_metadata, read_power_timeseries, write_input_loader_artifacts
 from .block_normalization import run_block4_normalize_from_parquet
+from .block_orientation_fit import run_block5_from_files as run_block5_from_files_impl
 from .block_orientation import estimate_orientation
 from .block_sdt import run_block2_sdt, run_sdt_onboarding, write_block2_artifacts
 from .types import Block3Result, InputLoaderResult, NormalizationResult, RunSingleResult, SdtBlockResult
@@ -166,4 +167,33 @@ def run_block4_from_files(
         quantile=quantile,
         min_fit_samples_day=min_fit_samples_day,
         dropna_output=dropna_output,
+    )
+
+
+def run_block5_from_files(
+    input_p_norm_parquet: str | Path,
+    output_dir: str | Path,
+    *,
+    latitude: float,
+    longitude: float,
+    timezone: str | None = None,
+    tilt_step: int = 5,
+    az_step: int = 10,
+    topk: int = 20,
+    quantile: float = 0.995,
+    norm_mode: str = "quantile",
+    fit_target: str = "median",
+) -> dict:
+    return run_block5_from_files_impl(
+        input_p_norm_parquet=input_p_norm_parquet,
+        output_dir=output_dir,
+        latitude=latitude,
+        longitude=longitude,
+        timezone=timezone,
+        tilt_step=tilt_step,
+        az_step=az_step,
+        topk=topk,
+        quantile=quantile,
+        norm_mode=norm_mode,
+        fit_target=fit_target,
     )

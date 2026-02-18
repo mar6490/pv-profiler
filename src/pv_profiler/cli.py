@@ -10,6 +10,7 @@ from .pipeline import (
     run_block2_sdt_from_parquet,
     run_block3_from_files,
     run_block4_from_files,
+    run_block5_from_files,
     run_single,
 )
 
@@ -114,6 +115,29 @@ def build_parser() -> argparse.ArgumentParser:
         help="Keep full timeline including NaN normalized samples",
     )
     block4_parser.set_defaults(dropna_output=True)
+
+    block5_parser = sub.add_parser("run-block5", help="Run orientation estimation (single/two-plane)")
+    block5_parser.add_argument("--input-p-norm-parquet", required=True, help="Path to 07_p_norm_clear.parquet")
+    block5_parser.add_argument("--output-dir", required=True, help="Directory for Block 5 artifacts")
+    block5_parser.add_argument("--latitude", required=True, type=float, help="Latitude in degrees")
+    block5_parser.add_argument("--longitude", required=True, type=float, help="Longitude in degrees")
+    block5_parser.add_argument("--timezone", default=None, help="Optional timezone override for naive timestamps")
+    block5_parser.add_argument("--tilt-step", type=int, default=5, help="Coarse tilt step in degrees")
+    block5_parser.add_argument("--az-step", type=int, default=10, help="Coarse azimuth step in degrees")
+    block5_parser.add_argument("--topk", type=int, default=20, help="Number of top candidates to export")
+    block5_parser.add_argument("--quantile", type=float, default=0.995, help="Daily normalization quantile")
+    block5_parser.add_argument(
+        "--norm-mode",
+        choices=["quantile", "max"],
+        default="quantile",
+        help="Daily model normalization mode",
+    )
+    block5_parser.add_argument(
+        "--fit-target",
+        choices=["median", "samples"],
+        default="median",
+        help="Target used for objective evaluation",
+    )
 
     return parser
 
@@ -242,6 +266,23 @@ def main() -> int:
                 indent=2,
             )
         )
+        return 0
+
+    if args.command == "run-block5":
+        result = run_block5_from_files(
+            input_p_norm_parquet=args.input_p_norm_parquet,
+            output_dir=args.output_dir,
+            latitude=args.latitude,
+            longitude=args.longitude,
+            timezone=args.timezone,
+            tilt_step=args.tilt_step,
+            az_step=args.az_step,
+            topk=args.topk,
+            quantile=args.quantile,
+            norm_mode=args.norm_mode,
+            fit_target=args.fit_target,
+        )
+        print(json.dumps(result, indent=2))
         return 0
 
     parser.error(f"Unknown command: {args.command}")
