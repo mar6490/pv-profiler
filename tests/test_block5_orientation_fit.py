@@ -93,6 +93,9 @@ def test_block5_single_plane_recovery(tmp_path):
     assert result["model_type"] == "single"
     assert abs(float(result["tilt_deg"]) - 25) <= 5
     assert abs(float(result["azimuth_deg"]) - 200) <= 10
+    assert "timing_seconds" in result
+    profile = pd.read_csv(out_dir / "10_profile_compare.csv")
+    assert {"minute_of_day", "observed_p_norm", "predicted_p_norm"}.issubset(profile.columns)
 
 
 def test_block5_two_plane_selected(tmp_path):
@@ -116,3 +119,5 @@ def test_block5_two_plane_selected(tmp_path):
     assert abs(float(result["tilt_deg"]) - 20) <= 10
     assert abs(float(result["azimuth_center_deg"]) - 180) <= 20
     assert 0.2 <= float(result["weight_east"]) <= 0.8
+    profile = pd.read_csv(out_dir / "10_profile_compare.csv")
+    assert {"minute_of_day", "observed_p_norm", "predicted_p_norm"}.issubset(profile.columns)

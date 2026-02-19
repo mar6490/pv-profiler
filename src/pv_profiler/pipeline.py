@@ -182,7 +182,6 @@ def run_block5_from_files(
     topk: int = 20,
     quantile: float = 0.995,
     norm_mode: str = "quantile",
-    fit_target: str = "median",
 ) -> dict:
     return run_block5_from_files_impl(
         input_p_norm_parquet=input_p_norm_parquet,
@@ -195,5 +194,4 @@ def run_block5_from_files(
         topk=topk,
         quantile=quantile,
         norm_mode=norm_mode,
-        fit_target=fit_target,
     )

@@ -118,14 +118,13 @@ pv-ident run-block5 \
   --latitude 52.45544 \
   --longitude 13.52481 \
   --quantile 0.995 \
-  --norm-mode quantile \
-  --fit-target median
+  --norm-mode quantile
 ```
 
 Erwartete Artefakte:
 - `08_orientation_result.json`
 - `09_orientation_topk.csv`
-- optional `10_profile_compare.csv`
+- `10_profile_compare.csv`
 
 Optional kann das Ergebnis in eine JSON-Datei geschrieben werden:
 

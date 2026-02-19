@@ -132,12 +132,6 @@ def build_parser() -> argparse.ArgumentParser:
         default="quantile",
         help="Daily model normalization mode",
     )
-    block5_parser.add_argument(
-        "--fit-target",
-        choices=["median", "samples"],
-        default="median",
-        help="Target used for objective evaluation",
-    )
 
     return parser
 
@@ -280,9 +274,16 @@ def main() -> int:
             topk=args.topk,
             quantile=args.quantile,
             norm_mode=args.norm_mode,
-            fit_target=args.fit_target,
         )
         print(json.dumps(result, indent=2))
+        t = result.get("timing_seconds", {})
+        print(
+            f"Block5 done in {t.get('total', 0.0):.2f} s "
+            f"(precompute={t.get('precompute', 0.0):.2f}, "
+            f"coarse={t.get('coarse_single', 0.0):.2f}, "
+            f"fine={t.get('fine_single', 0.0):.2f}, "
+            f"two_plane={t.get('coarse_two_plane', 0.0):.2f})"
+        )
         return 0
 
     parser.error(f"Unknown command: {args.command}")
