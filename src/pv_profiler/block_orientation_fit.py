@@ -102,7 +102,7 @@ def run_block5_orientation_fit(
     topk: int = 20,
     quantile: float = 0.995,
     norm_mode: str = "quantile",
-) -> tuple[dict, pd.DataFrame, pd.DataFrame]:
+) -> tuple[dict, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     t_total0 = time.perf_counter()
 
     if not isinstance(p_norm_df.index, pd.DatetimeIndex):
@@ -296,7 +296,24 @@ def run_block5_orientation_fit(
     minutes = pd.Index(np.arange(0, 24 * 60, 5), name="minute_of_day")
     profile_compare = pd.concat([obs_prof, pred_prof], axis=1).reindex(minutes).reset_index()
 
-    return result, top, profile_compare
+    all_records = pd.DataFrame(records)
+    single_full = (
+        all_records.loc[all_records["model_type"] == "single", ["tilt_deg", "azimuth_deg", "rmse", "bic"]]
+        .drop_duplicates(subset=["tilt_deg", "azimuth_deg"], keep="first")
+        .sort_values(["tilt_deg", "azimuth_deg"])
+        .reset_index(drop=True)
+    )
+    two_plane_full = (
+        all_records.loc[
+            all_records["model_type"] == "two_plane",
+            ["tilt_deg", "azimuth_center_deg", "weight_east", "rmse", "bic"],
+        ]
+        .drop_duplicates(subset=["tilt_deg", "azimuth_center_deg", "weight_east"], keep="first")
+        .sort_values(["tilt_deg", "azimuth_center_deg", "weight_east"])
+        .reset_index(drop=True)
+    )
+
+    return result, top, profile_compare, single_full, two_plane_full
 
 
 def run_block5_from_files(
@@ -313,7 +330,7 @@ def run_block5_from_files(
     norm_mode: str = "quantile",
 ) -> dict:
     df = pd.read_parquet(input_p_norm_parquet)
-    result, topk_df, profile_compare = run_block5_orientation_fit(
+    result, topk_df, profile_compare, single_full, two_plane_full = run_block5_orientation_fit(
         df,
         latitude=latitude,
         longitude=longitude,
@@ -329,5 +346,7 @@ def run_block5_from_files(
     out.mkdir(parents=True, exist_ok=True)
     (out / "08_orientation_result.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     topk_df.to_csv(out / "09_orientation_topk.csv", index=False)
+    single_full.to_csv(out / "09a_orientation_single_full_grid.csv", index=False)
+    two_plane_full.to_csv(out / "09b_orientation_two_plane_full_grid.csv", index=False)
     profile_compare.to_csv(out / "10_profile_compare.csv", index=False)
     return result

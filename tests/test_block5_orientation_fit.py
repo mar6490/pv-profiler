@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import subprocess
+import sys
+
 import pandas as pd
 import pvlib
 
@@ -96,6 +99,8 @@ def test_block5_single_plane_recovery(tmp_path):
     assert "timing_seconds" in result
     profile = pd.read_csv(out_dir / "10_profile_compare.csv")
     assert {"minute_of_day", "observed_p_norm", "predicted_p_norm"}.issubset(profile.columns)
+    single_full = pd.read_csv(out_dir / "09a_orientation_single_full_grid.csv")
+    assert {"tilt_deg", "azimuth_deg", "rmse", "bic"}.issubset(single_full.columns)
 
 
 def test_block5_two_plane_selected(tmp_path):
@@ -121,3 +126,36 @@ def test_block5_two_plane_selected(tmp_path):
     assert 0.2 <= float(result["weight_east"]) <= 0.8
     profile = pd.read_csv(out_dir / "10_profile_compare.csv")
     assert {"minute_of_day", "observed_p_norm", "predicted_p_norm"}.issubset(profile.columns)
+    assert (out_dir / "09b_orientation_two_plane_full_grid.csv").exists()
+
+
+def test_plot_script_generates_expected_files(tmp_path):
+    lat, lon = 52.45544, 13.52481
+    df = _make_synthetic_single(lat, lon, tilt=25, azimuth=200)
+    out_dir = tmp_path / "out"
+    input_parquet = tmp_path / "07_p_norm_clear.parquet"
+    df.to_parquet(input_parquet)
+
+    run_block5_from_files(
+        input_p_norm_parquet=input_parquet,
+        output_dir=out_dir,
+        latitude=lat,
+        longitude=lon,
+        tilt_step=20,
+        az_step=20,
+        topk=5,
+    )
+
+    cmd = [
+        sys.executable,
+        "scripts/plot_block5_results.py",
+        "--input-dir",
+        str(out_dir),
+    ]
+    subprocess.run(cmd, check=True)
+
+    assert (out_dir / "plot_rmse_heatmap.png").exists()
+    assert (out_dir / "plot_profile_compare.png").exists()
+    assert (out_dir / "plot_residual_vs_time.png").exists()
+    assert (out_dir / "plot_rmse_vs_azimuth.png").exists()
+    assert (out_dir / "block5_diagnostics.pdf").exists()

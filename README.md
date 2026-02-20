@@ -124,7 +124,22 @@ pv-ident run-block5 \
 Erwartete Artefakte:
 - `08_orientation_result.json`
 - `09_orientation_topk.csv`
+- `09a_orientation_single_full_grid.csv`
+- `09b_orientation_two_plane_full_grid.csv`
 - `10_profile_compare.csv`
+
+Plots aus Block-5-Outputs erzeugen:
+
+```bash
+python scripts/plot_block5_results.py --input-dir outputs/sonnja_wr1_block5
+```
+
+Erwartete Plot-Dateien:
+- `plot_rmse_heatmap.png`
+- `plot_profile_compare.png`
+- `plot_residual_vs_time.png`
+- `plot_rmse_vs_azimuth.png`
+- `block5_diagnostics.pdf`
 
 Optional kann das Ergebnis in eine JSON-Datei geschrieben werden:
 
