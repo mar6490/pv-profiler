@@ -132,6 +132,23 @@ def build_parser() -> argparse.ArgumentParser:
         default="quantile",
         help="Daily model normalization mode",
     )
+    block5_parser.add_argument(
+        "--two-plane-delta-az-deg",
+        type=float,
+        default=90.0,
+        help="Two-plane half-delta in azimuth degrees (east=center-delta, west=center+delta)",
+    )
+    block5_parser.add_argument(
+        "--skip-two-plane",
+        action="store_true",
+        help="Skip two-plane fitting and keep single-plane result",
+    )
+    block5_parser.add_argument(
+        "--two-plane-if-rmse-ge",
+        type=float,
+        default=0.0,
+        help="Run two-plane only if best single-plane RMSE is >= threshold (0.0 means always run)",
+    )
 
     return parser
 
@@ -274,6 +291,9 @@ def main() -> int:
             topk=args.topk,
             quantile=args.quantile,
             norm_mode=args.norm_mode,
+            two_plane_delta_az_deg=args.two_plane_delta_az_deg,
+            skip_two_plane=args.skip_two_plane,
+            two_plane_if_rmse_ge=args.two_plane_if_rmse_ge,
         )
         print(json.dumps(result, indent=2))
         t = result.get("timing_seconds", {})

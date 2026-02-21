@@ -182,6 +182,9 @@ def run_block5_from_files(
     topk: int = 20,
     quantile: float = 0.995,
     norm_mode: str = "quantile",
+    two_plane_delta_az_deg: float = 90.0,
+    skip_two_plane: bool = False,
+    two_plane_if_rmse_ge: float = 0.0,
 ) -> dict:
     return run_block5_from_files_impl(
         input_p_norm_parquet=input_p_norm_parquet,
@@ -194,4 +197,7 @@ def run_block5_from_files(
         topk=topk,
         quantile=quantile,
         norm_mode=norm_mode,
+        two_plane_delta_az_deg=two_plane_delta_az_deg,
+        skip_two_plane=skip_two_plane,
+        two_plane_if_rmse_ge=two_plane_if_rmse_ge,
     )
