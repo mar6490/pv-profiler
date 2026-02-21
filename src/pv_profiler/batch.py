@@ -4,7 +4,6 @@ import json
 import re
 import traceback
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from time import perf_counter
@@ -32,12 +31,19 @@ def _system_sort_key(path: Path) -> tuple[int, str]:
     return 10**12, path.name
 
 
+def parse_system_id_from_filename(path: Path) -> int:
+    m = re.search(r"(\d+)", path.stem)
+    if not m:
+        raise ValueError(f"Could not parse integer system_id from filename: {path.name}")
+    return int(m.group(1))
+
+
 def discover_input_csvs(input_dir: str | Path, pattern: str) -> list[Path]:
     paths = sorted(Path(input_dir).glob(pattern), key=_system_sort_key)
     return [p for p in paths if p.is_file()]
 
 
-def _load_lat_lon_map(systems_metadata_csv: str | Path | None, system_id_col: str) -> dict[str, tuple[float, float]]:
+def _load_lat_lon_map(systems_metadata_csv: str | Path | None, system_id_col: str) -> dict[int, tuple[float, float]]:
     if systems_metadata_csv is None:
         return {}
     df = pd.read_csv(systems_metadata_csv)
@@ -46,10 +52,10 @@ def _load_lat_lon_map(systems_metadata_csv: str | Path | None, system_id_col: st
     if lat_col is None or lon_col is None or system_id_col not in df.columns:
         return {}
 
-    out: dict[str, tuple[float, float]] = {}
+    out: dict[int, tuple[float, float]] = {}
     for _, row in df.iterrows():
-        sid = str(row[system_id_col])
         try:
+            sid = int(row[system_id_col])
             out[sid] = (float(row[lat_col]), float(row[lon_col]))
         except Exception:
             continue
@@ -99,11 +105,12 @@ def _process_one(
     timezone_str: str,
     latitude: float | None,
     longitude: float | None,
-    lat_lon_map: dict[str, tuple[float, float]],
+    lat_lon_map: dict[int, tuple[float, float]],
     skip_existing: bool,
 ) -> dict[str, Any]:
-    system_id = input_csv.stem
-    output_dir = output_root / system_id
+    system_name = input_csv.stem
+    system_id = parse_system_id_from_filename(input_csv)
+    output_dir = output_root / system_name
     output_dir.mkdir(parents=True, exist_ok=True)
 
     started = _now_iso()
@@ -128,7 +135,7 @@ def _process_one(
             lat, lon = latitude, longitude
         else:
             if system_id not in lat_lon_map:
-                raise ValueError(f"No lat/lon found for system_id={system_id}")
+                raise ValueError(f"No metadata lat/lon found for parsed system_id={system_id}")
             lat, lon = lat_lon_map[system_id]
 
         fit_result = _run_blocks_for_system(

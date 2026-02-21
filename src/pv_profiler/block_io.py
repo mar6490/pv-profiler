@@ -81,6 +81,8 @@ def load_input_for_sdt(
         else:
             out.index = out.index.tz_convert(timezone)
             decisions.append(f"tz_converted_to: {timezone}")
+    elif out.index.tz is not None:
+        decisions.append("tz_kept_from_input: true")
 
     if out.index.tz is not None:
         out.index = out.index.tz_localize(None)

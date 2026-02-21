@@ -73,3 +73,45 @@ def test_cli_run_block1_writes_required_artifacts(monkeypatch, tmp_path):
     assert "shape" in diag
     assert "sampling_summary" in diag
     assert "decisions" in diag
+
+
+def test_block1_loader_tz_naive_localizes_without_error(tmp_path):
+    csv_path = tmp_path / "naive.csv"
+    csv_path.write_text(
+        "time,ac_power_w\n"
+        "2025-01-01 00:00:00,10\n"
+        "2025-01-01 00:05:00,11\n"
+        "2025-01-01 00:10:00,12\n",
+        encoding="utf-8",
+    )
+
+    result = load_input_for_sdt(
+        input_path=csv_path,
+        timestamp_col="time",
+        power_col="ac_power_w",
+        timezone="Etc/GMT-1",
+        min_samples=3,
+    )
+
+    assert result.data.index[0].strftime("%Y-%m-%d %H:%M:%S") == "2025-01-01 00:00:00"
+
+
+def test_block1_loader_tz_aware_does_not_double_localize_or_shift(tmp_path):
+    csv_path = tmp_path / "aware.csv"
+    csv_path.write_text(
+        "time,ac_power_w\n"
+        "2025-01-01 00:00:00+01:00,10\n"
+        "2025-01-01 00:05:00+01:00,11\n"
+        "2025-01-01 00:10:00+01:00,12\n",
+        encoding="utf-8",
+    )
+
+    result = load_input_for_sdt(
+        input_path=csv_path,
+        timestamp_col="time",
+        power_col="ac_power_w",
+        timezone="Etc/GMT-1",
+        min_samples=3,
+    )
+
+    assert result.data.index[0].strftime("%Y-%m-%d %H:%M:%S") == "2025-01-01 00:00:00"

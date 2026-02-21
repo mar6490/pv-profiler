@@ -32,8 +32,8 @@ def build_benchmark_results(
 
     rows: list[dict[str, Any]] = []
     for _, row in meta.iterrows():
-        sid = str(row[system_id_col])
-        out_dir = output_root / sid
+        sid = int(row[system_id_col])
+        out_dir = output_root / f"system_{sid:03d}"
         result_path = out_dir / "08_orientation_result.json"
 
         gt_tilt = _pick(row, ["tilt_true", "true_tilt", "tilt_deg", "tilt"])
