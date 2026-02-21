@@ -1,5 +1,6 @@
 """pv_profiler package."""
 
+from .batch import run_batch
 from .pipeline import (
     run_block1_input_loader,
     run_block2_sdt_from_csv,
@@ -13,6 +14,7 @@ from .pipeline import (
 
 __all__ = [
     "run_single",
+    "run_batch",
     "run_block1_input_loader",
     "run_block2_sdt_from_df",
     "run_block2_sdt_from_parquet",

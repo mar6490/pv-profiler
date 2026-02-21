@@ -15,6 +15,7 @@ dependencies = [
   "pvlib",
   "pyyaml",
   "pyarrow",
+  "matplotlib",
   "pytest",
 ]
 

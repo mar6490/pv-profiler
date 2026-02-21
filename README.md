@@ -141,6 +141,28 @@ Erwartete Plot-Dateien:
 - `plot_rmse_vs_azimuth.png`
 - `block5_diagnostics.pdf`
 
+## Batch benchmark (synthetic)
+
+```bash
+pv-ident run-batch \
+  --input-dir path/to/systems \
+  --pattern "system_*.csv" \
+  --output-root pvprofiler_benchmark \
+  --timestamp-col time \
+  --power-col ac_power_w \
+  --latitude 52.45544 \
+  --longitude 13.52481 \
+  --timezone Etc/GMT-1 \
+  --jobs 4
+
+python scripts/benchmark_synthetic.py \
+  --output-root pvprofiler_benchmark \
+  --systems-metadata-csv path/to/systems_metadata.csv
+
+python scripts/plot_benchmark_results.py \
+  --input pvprofiler_benchmark/benchmark_results.csv
+```
+
 Optional kann das Ergebnis in eine JSON-Datei geschrieben werden:
 
 ```bash

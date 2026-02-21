@@ -4,6 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
+from .batch import run_batch
 from .pipeline import (
     run_block1_input_loader,
     run_block2_sdt_from_csv,
@@ -149,6 +150,20 @@ def build_parser() -> argparse.ArgumentParser:
         default=0.0,
         help="Run two-plane only if best single-plane RMSE is >= threshold (0.0 means always run)",
     )
+
+    batch_parser = sub.add_parser("run-batch", help="Run Blocks 1-5 for many CSV systems")
+    batch_parser.add_argument("--input-dir", required=True)
+    batch_parser.add_argument("--pattern", default="system_*.csv")
+    batch_parser.add_argument("--output-root", required=True)
+    batch_parser.add_argument("--timestamp-col", default="time")
+    batch_parser.add_argument("--power-col", default="ac_power_w")
+    batch_parser.add_argument("--timezone", default="Etc/GMT-1")
+    batch_parser.add_argument("--latitude", type=float, default=None)
+    batch_parser.add_argument("--longitude", type=float, default=None)
+    batch_parser.add_argument("--systems-metadata-csv", default=None)
+    batch_parser.add_argument("--system-id-col", default="system_id")
+    batch_parser.add_argument("--jobs", type=int, default=1)
+    batch_parser.add_argument("--skip-existing", action="store_true")
 
     return parser
 
@@ -304,6 +319,24 @@ def main() -> int:
             f"fine={t.get('fine_single', 0.0):.2f}, "
             f"two_plane={t.get('coarse_two_plane', 0.0):.2f})"
         )
+        return 0
+
+    if args.command == "run-batch":
+        summary = run_batch(
+            input_dir=args.input_dir,
+            pattern=args.pattern,
+            output_root=args.output_root,
+            timestamp_col=args.timestamp_col,
+            power_col=args.power_col,
+            timezone_str=args.timezone,
+            latitude=args.latitude,
+            longitude=args.longitude,
+            systems_metadata_csv=args.systems_metadata_csv,
+            system_id_col=args.system_id_col,
+            jobs=args.jobs,
+            skip_existing=args.skip_existing,
+        )
+        print(summary[[c for c in ["system_id", "status", "runtime_seconds"] if c in summary.columns]].to_string(index=False))
         return 0
 
     parser.error(f"Unknown command: {args.command}")
