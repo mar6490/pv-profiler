@@ -123,7 +123,8 @@ pv-ident run-batch \
   --timestamp-col time \
   --power-col ac_power_w \
   --timezone Etc/GMT-1 \
-  --jobs 4
+  --jobs 4 \
+  --two-plane-weight-mode fixed_50_50
 ```
 
 ### 3) Einzelne Blöcke separat
@@ -177,8 +178,11 @@ pv-ident run-block5 \
   --output-dir outputs/sonnja_wr1_block5 \
   --latitude 52.45544 \
   --longitude 13.52481 \
-  --timezone Etc/GMT-1
+  --timezone Etc/GMT-1 \
+  --two-plane-weight-mode fixed_50_50
 ```
+
+Standard: Two-Plane nutzt `fixed_50_50` (50/50) ohne LS-Gewichtsschätzung. Optional kann LS aktiviert werden mit `--two-plane-weight-mode analytic_optimum`.
 
 ---
 

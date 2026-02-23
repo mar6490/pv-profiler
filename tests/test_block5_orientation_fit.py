@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import pvlib
 
-from pv_profiler.block_orientation_fit import _optimal_weight, _two_plane_azimuths, run_block5_from_files
+from pv_profiler.block_orientation_fit import _optimal_weight, _two_plane_azimuths, run_block5_from_files, run_block5_orientation_fit
 
 
 def _daily_quantile_normalize(series: pd.Series, q: float = 0.995) -> pd.Series:
@@ -231,3 +231,78 @@ def test_two_plane_skip_threshold_sets_flag(tmp_path):
     )
 
     assert result["two_plane_run"] is False
+
+
+def test_two_plane_fixed_50_50_skips_weight_optimization(monkeypatch):
+    idx = pd.date_range("2020-01-01", periods=48, freq="h")
+    df = pd.DataFrame({"p_norm": np.clip(np.sin(np.linspace(0, 3.14, len(idx))), 0, None)}, index=idx)
+
+    called = {"optimal": False}
+    seen_k: list[int] = []
+
+    def fail_optimal(*args, **kwargs):
+        called["optimal"] = True
+        raise AssertionError("_optimal_weight should not be called in fixed_50_50 mode")
+
+    real_eval = __import__("pv_profiler.block_orientation_fit", fromlist=["_evaluate_candidate_samples"])._evaluate_candidate_samples
+
+    def spy_eval(observed, pred, k):
+        seen_k.append(int(k))
+        return real_eval(observed, pred, k)
+
+    monkeypatch.setattr("pv_profiler.block_orientation_fit._optimal_weight", fail_optimal)
+    monkeypatch.setattr("pv_profiler.block_orientation_fit._evaluate_candidate_samples", spy_eval)
+
+    result, _top, _prof, _single, two_full = run_block5_orientation_fit(
+        df,
+        latitude=52.45544,
+        longitude=13.52481,
+        timezone="Etc/GMT-1",
+        tilt_step=60,
+        az_step=240,
+        two_plane_weight_mode="fixed_50_50",
+    )
+
+    assert called["optimal"] is False
+    assert result["two_plane_weight_mode"] == "fixed_50_50"
+    assert 3 not in seen_k
+    if not two_full.empty:
+        assert set(two_full["weight_opt"]) == {0.5}
+        assert set(two_full["weight_mode"]) == {"fixed_50_50"}
+
+
+def test_two_plane_analytic_optimum_uses_weight_optimization(monkeypatch):
+    idx = pd.date_range("2020-01-01", periods=48, freq="h")
+    df = pd.DataFrame({"p_norm": np.clip(np.sin(np.linspace(0, 3.14, len(idx))), 0, None)}, index=idx)
+
+    calls = {"optimal": 0}
+    seen_k: list[int] = []
+
+    def fake_optimal(*args, **kwargs):
+        calls["optimal"] += 1
+        return 0.3
+
+    real_eval = __import__("pv_profiler.block_orientation_fit", fromlist=["_evaluate_candidate_samples"])._evaluate_candidate_samples
+
+    def spy_eval(observed, pred, k):
+        seen_k.append(int(k))
+        return real_eval(observed, pred, k)
+
+    monkeypatch.setattr("pv_profiler.block_orientation_fit._optimal_weight", fake_optimal)
+    monkeypatch.setattr("pv_profiler.block_orientation_fit._evaluate_candidate_samples", spy_eval)
+
+    result, _top, _prof, _single, two_full = run_block5_orientation_fit(
+        df,
+        latitude=52.45544,
+        longitude=13.52481,
+        timezone="Etc/GMT-1",
+        tilt_step=60,
+        az_step=240,
+        two_plane_weight_mode="analytic_optimum",
+    )
+
+    assert calls["optimal"] > 0
+    assert result["two_plane_weight_mode"] == "analytic_optimum"
+    assert 3 in seen_k
+    if not two_full.empty:
+        assert set(two_full["weight_mode"]) == {"analytic_optimum"}

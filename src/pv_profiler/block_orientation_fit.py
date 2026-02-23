@@ -126,6 +126,7 @@ def run_block5_orientation_fit(
     two_plane_half_delta_az_deg: float = 90.0,
     skip_two_plane: bool = False,
     two_plane_if_rmse_ge: float = 0.0,
+    two_plane_weight_mode: str = "fixed_50_50",
 ) -> tuple[dict, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     t_total0 = time.perf_counter()
 
@@ -138,6 +139,9 @@ def run_block5_orientation_fit(
     obs = obs.dropna(subset=["p_norm"])
     if obs.empty:
         raise ValueError("Input p_norm contains no usable rows")
+
+    if two_plane_weight_mode not in {"fixed_50_50", "analytic_optimum"}:
+        raise ValueError("two_plane_weight_mode must be one of: fixed_50_50, analytic_optimum")
 
     local_times, tz_used = _localize_logger_times(obs.index, timezone)
     obs_local = pd.Series(obs["p_norm"].to_numpy(dtype=float), index=local_times, name="p_norm")
@@ -217,14 +221,20 @@ def run_block5_orientation_fit(
                 p1_norm = _daily_normalize(poa_e, quantile=quantile, norm_mode=norm_mode)
                 p2_norm = _daily_normalize(poa_w, quantile=quantile, norm_mode=norm_mode)
 
-                w_opt = _optimal_weight(
-                    observed_arr,
-                    p1_norm.to_numpy(dtype=float),
-                    p2_norm.to_numpy(dtype=float),
-                )
+                if two_plane_weight_mode == "analytic_optimum":
+                    w_opt = _optimal_weight(
+                        observed_arr,
+                        p1_norm.to_numpy(dtype=float),
+                        p2_norm.to_numpy(dtype=float),
+                    )
+                    k_two = 3
+                else:
+                    w_opt = 0.5
+                    k_two = 2
+
                 p_mix = w_opt * p1_norm + (1 - w_opt) * p2_norm
 
-                rmse, bic = _evaluate_candidate_samples(observed_arr, p_mix, k=3)
+                rmse, bic = _evaluate_candidate_samples(observed_arr, p_mix, k=k_two)
                 records.append(
                     {
                         "model_type": "two_plane",
@@ -234,6 +244,7 @@ def run_block5_orientation_fit(
                         "azimuth_east_deg": az_e,
                         "azimuth_west_deg": az_w,
                         "weight_opt": float(w_opt),
+                        "weight_mode": two_plane_weight_mode,
                         "rmse": rmse,
                         "bic": bic,
                     }
@@ -247,6 +258,7 @@ def run_block5_orientation_fit(
                         "azimuth_east_deg": az_e,
                         "azimuth_west_deg": az_w,
                         "weight_opt": float(w_opt),
+                        "weight_mode": two_plane_weight_mode,
                     },
                     rmse,
                     bic,
@@ -274,6 +286,7 @@ def run_block5_orientation_fit(
         "rmse_single": best_single.rmse,
         "bic_single": best_single.bic,
         "two_plane_run": bool(run_two_plane),
+        "two_plane_weight_mode": two_plane_weight_mode,
         "n_points": int(len(observed_arr)),
         "grid_spec": {
             "tilt_range": [0, 60],
@@ -281,7 +294,7 @@ def run_block5_orientation_fit(
             "azimuth_range": [60, 300],
             "azimuth_step": int(az_step),
             "two_plane_half_delta_az_deg": float(two_plane_half_delta_az_deg),
-            "two_plane_weight": "analytic_optimum",
+            "two_plane_weight_mode": two_plane_weight_mode,
         },
         "norm_mode": norm_mode,
         "quantile": quantile,
@@ -298,6 +311,7 @@ def run_block5_orientation_fit(
                 "azimuth_east_deg": winner.params["azimuth_east_deg"],
                 "azimuth_west_deg": winner.params["azimuth_west_deg"],
                 "weight_east": winner.params["weight_opt"],
+                "weight_mode": winner.params["weight_mode"],
             }
         )
 
@@ -343,15 +357,15 @@ def run_block5_orientation_fit(
         .sort_values(["tilt_deg", "azimuth_deg"])
         .reset_index(drop=True)
     )
-    two_plane_cols = ["tilt_deg", "azimuth_center_deg", "weight_opt", "rmse", "bic"]
+    two_plane_cols = ["tilt_deg", "azimuth_center_deg", "weight_mode", "weight_opt", "rmse", "bic"]
     two_plane_subset = all_records.loc[all_records["model_type"] == "two_plane"]
     if two_plane_subset.empty:
         two_plane_full = pd.DataFrame(columns=two_plane_cols)
     else:
         two_plane_full = (
             two_plane_subset[two_plane_cols]
-            .drop_duplicates(subset=["tilt_deg", "azimuth_center_deg", "weight_opt"], keep="first")
-            .sort_values(["tilt_deg", "azimuth_center_deg", "weight_opt"])
+            .drop_duplicates(subset=["tilt_deg", "azimuth_center_deg", "weight_mode", "weight_opt"], keep="first")
+            .sort_values(["tilt_deg", "azimuth_center_deg", "weight_mode", "weight_opt"])
             .reset_index(drop=True)
         )
 
@@ -373,6 +387,7 @@ def run_block5_from_files(
     two_plane_delta_az_deg: float = 90.0,
     skip_two_plane: bool = False,
     two_plane_if_rmse_ge: float = 0.0,
+    two_plane_weight_mode: str = "fixed_50_50",
 ) -> dict:
     df = pd.read_parquet(input_p_norm_parquet)
     result, topk_df, profile_compare, single_full, two_plane_full = run_block5_orientation_fit(
@@ -388,6 +403,7 @@ def run_block5_from_files(
         two_plane_half_delta_az_deg=two_plane_delta_az_deg,
         skip_two_plane=skip_two_plane,
         two_plane_if_rmse_ge=two_plane_if_rmse_ge,
+        two_plane_weight_mode=two_plane_weight_mode,
     )
 
     out = Path(output_dir)

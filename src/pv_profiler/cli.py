@@ -150,6 +150,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=0.0,
         help="Run two-plane only if best single-plane RMSE is >= threshold (0.0 means always run)",
     )
+    block5_parser.add_argument(
+        "--two-plane-weight-mode",
+        choices=["fixed_50_50", "analytic_optimum"],
+        default="fixed_50_50",
+        help="Two-plane weight mode (default: fixed 50/50, optional analytic optimum)",
+    )
 
     batch_parser = sub.add_parser("run-batch", help="Run Blocks 1-5 for many CSV systems")
     batch_parser.add_argument("--input-dir", required=True)
@@ -165,6 +171,11 @@ def build_parser() -> argparse.ArgumentParser:
     batch_parser.add_argument("--jobs", type=int, default=1)
     batch_parser.add_argument("--skip-existing", action="store_true")
     batch_parser.add_argument("--fix-shifts", action="store_true")
+    batch_parser.add_argument(
+        "--two-plane-weight-mode",
+        choices=["fixed_50_50", "analytic_optimum"],
+        default="fixed_50_50",
+    )
 
     return parser
 
@@ -310,6 +321,7 @@ def main() -> int:
             two_plane_delta_az_deg=args.two_plane_delta_az_deg,
             skip_two_plane=args.skip_two_plane,
             two_plane_if_rmse_ge=args.two_plane_if_rmse_ge,
+            two_plane_weight_mode=args.two_plane_weight_mode,
         )
         print(json.dumps(result, indent=2))
         t = result.get("timing_seconds", {})
@@ -337,6 +349,7 @@ def main() -> int:
             jobs=args.jobs,
             skip_existing=args.skip_existing,
             fix_shifts=args.fix_shifts,
+            two_plane_weight_mode=args.two_plane_weight_mode,
         )
         print(summary[[c for c in ["system_id", "status", "runtime_seconds"] if c in summary.columns]].to_string(index=False))
         return 0
