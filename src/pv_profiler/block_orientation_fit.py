@@ -68,6 +68,7 @@ def _poa_single(
     azimuth: float,
     dni_extra: pd.Series,
 ) -> pd.Series:
+    airmass = pvlib.atmosphere.get_relative_airmass(solar_position["apparent_zenith"])
     return pvlib.irradiance.get_total_irradiance(
         surface_tilt=float(tilt),
         surface_azimuth=float(azimuth),
@@ -77,7 +78,8 @@ def _poa_single(
         ghi=clearsky["ghi"],
         dhi=clearsky["dhi"],
         dni_extra=dni_extra,
-        model="haydavies",
+        airmass=airmass,
+        model="perez",
     )["poa_global"].clip(lower=0)
 
 

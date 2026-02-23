@@ -25,6 +25,7 @@ def _make_synthetic_single(latitude: float, longitude: float, tilt: float, azimu
     sp = loc.get_solarposition(times)
     cs = loc.get_clearsky(times, model="ineichen")
     dni_extra = pvlib.irradiance.get_extra_radiation(times)
+    airmass = pvlib.atmosphere.get_relative_airmass(sp["apparent_zenith"])
     poa = pvlib.irradiance.get_total_irradiance(
         surface_tilt=tilt,
         surface_azimuth=azimuth,
@@ -34,7 +35,8 @@ def _make_synthetic_single(latitude: float, longitude: float, tilt: float, azimu
         ghi=cs["ghi"],
         dhi=cs["dhi"],
         dni_extra=dni_extra,
-        model="haydavies",
+        airmass=airmass,
+        model="perez",
     )["poa_global"].clip(lower=0)
     p_norm = _daily_quantile_normalize(poa)
     return pd.DataFrame({"p_norm": p_norm.to_numpy()}, index=times.tz_localize(None))
@@ -46,6 +48,7 @@ def _make_synthetic_two_plane(latitude: float, longitude: float, tilt: float, ce
     sp = loc.get_solarposition(times)
     cs = loc.get_clearsky(times, model="ineichen")
     dni_extra = pvlib.irradiance.get_extra_radiation(times)
+    airmass = pvlib.atmosphere.get_relative_airmass(sp["apparent_zenith"])
 
     az_e = center - 45
     az_w = center + 45
@@ -58,7 +61,8 @@ def _make_synthetic_two_plane(latitude: float, longitude: float, tilt: float, ce
         ghi=cs["ghi"],
         dhi=cs["dhi"],
         dni_extra=dni_extra,
-        model="haydavies",
+        airmass=airmass,
+        model="perez",
     )["poa_global"].clip(lower=0)
     poa_w = pvlib.irradiance.get_total_irradiance(
         surface_tilt=tilt,
@@ -69,12 +73,38 @@ def _make_synthetic_two_plane(latitude: float, longitude: float, tilt: float, ce
         ghi=cs["ghi"],
         dhi=cs["dhi"],
         dni_extra=dni_extra,
-        model="haydavies",
+        airmass=airmass,
+        model="perez",
     )["poa_global"].clip(lower=0)
 
     mix = w * poa_e + (1 - w) * poa_w
     p_norm = _daily_quantile_normalize(mix)
     return pd.DataFrame({"p_norm": p_norm.to_numpy()}, index=times.tz_localize(None))
+
+
+def test_poa_single_uses_perez_with_airmass(monkeypatch):
+    from pv_profiler.block_orientation_fit import _poa_single
+
+    idx = pd.date_range("2020-01-01", periods=3, freq="h", tz="Etc/GMT-1")
+    solar_position = pd.DataFrame(
+        {"apparent_zenith": [80.0, 60.0, 70.0], "azimuth": [100.0, 120.0, 140.0]},
+        index=idx,
+    )
+    clearsky = pd.DataFrame({"dni": [0.0, 400.0, 100.0], "ghi": [0.0, 300.0, 100.0], "dhi": [0.0, 80.0, 20.0]}, index=idx)
+    dni_extra = pd.Series([1367.0, 1367.0, 1367.0], index=idx)
+
+    seen: dict[str, object] = {}
+
+    def fake_get_total_irradiance(**kwargs):
+        seen.update(kwargs)
+        return {"poa_global": pd.Series([0.1, 0.2, 0.1], index=idx)}
+
+    monkeypatch.setattr("pv_profiler.block_orientation_fit.pvlib.irradiance.get_total_irradiance", fake_get_total_irradiance)
+
+    _poa_single(solar_position, clearsky, tilt=20, azimuth=180, dni_extra=dni_extra)
+
+    assert seen["model"] == "perez"
+    assert seen["airmass"] is not None
 
 
 def test_block5_single_plane_recovery(tmp_path):

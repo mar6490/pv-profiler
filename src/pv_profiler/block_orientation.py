@@ -32,6 +32,7 @@ def estimate_orientation(
     dni = clearsky["dni"]
     dhi = clearsky["dhi"]
     dni_extra = pvlib.irradiance.get_extra_radiation(power_series.index)
+    airmass = pvlib.atmosphere.get_relative_airmass(solar_position["apparent_zenith"])
 
     for tilt in tilts:
         for azimuth in azimuths:
@@ -44,7 +45,8 @@ def estimate_orientation(
                 ghi=ghi,
                 dhi=dhi,
                 dni_extra=dni_extra,
-                model="haydavies",
+                airmass=airmass,
+                model="perez",
             )["poa_global"].clip(lower=0)
             poa_norm = poa / (poa.max() or 1.0)
             score = float(target_norm.corr(poa_norm))

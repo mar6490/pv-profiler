@@ -38,6 +38,8 @@ def test_estimate_orientation_passes_dni_extra(monkeypatch):
     def fake_get_total_irradiance(**kwargs):
         calls.append(kwargs)
         assert kwargs.get("dni_extra") is not None
+        assert kwargs.get("airmass") is not None
+        assert kwargs.get("model") == "perez"
         return {"poa_global": pd.Series([0.1, 0.3, 0.9, 0.2], index=idx)}
 
     monkeypatch.setattr("pv_profiler.block_orientation.pvlib.irradiance.get_total_irradiance", fake_get_total_irradiance)
