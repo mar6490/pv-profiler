@@ -94,6 +94,8 @@ pv-ident run-batch `
   --jobs 1
 ```
 
+Hinweis: SDT-Shift-Korrektur ist im Batch standardmäßig **aus**. Nur bei Bedarf aktivieren mit `--fix-shifts`.
+
 ---
 
 ## CLI-Befehle im Überblick
@@ -147,6 +149,8 @@ pv-ident run-block2 \
   --output-dir outputs/sonnja_wr1_block2 \
   --solver CLARABEL
 ```
+
+Standard: SDT `fix_shifts` ist **aus**. Optional aktivieren mit `--fix-shifts`.
 
 #### Block 3
 

@@ -71,6 +71,7 @@ def _run_blocks_for_system(
     timezone_str: str,
     latitude: float,
     longitude: float,
+    fix_shifts: bool,
 ) -> dict[str, Any]:
     run_block1_input_loader(
         input_csv=input_csv,
@@ -79,7 +80,11 @@ def _run_blocks_for_system(
         power_col=power_col,
         timezone=timezone_str,
     )
-    run_block2_sdt_from_parquet(input_parquet=output_dir / "01_input_power.parquet", output_dir=output_dir)
+    run_block2_sdt_from_parquet(
+        input_parquet=output_dir / "01_input_power.parquet",
+        output_dir=output_dir,
+        fix_shifts=fix_shifts,
+    )
     run_block3_from_files(
         input_power_parquet=output_dir / "01_input_power.parquet",
         input_daily_flags_csv=output_dir / "02_sdt_daily_flags.csv",
@@ -107,6 +112,7 @@ def _process_one(
     longitude: float | None,
     lat_lon_map: dict[int, tuple[float, float]],
     skip_existing: bool,
+    fix_shifts: bool,
 ) -> dict[str, Any]:
     system_name = input_csv.stem
     system_id = parse_system_id_from_filename(input_csv)
@@ -146,6 +152,7 @@ def _process_one(
             timezone_str=timezone_str,
             latitude=lat,
             longitude=lon,
+            fix_shifts=fix_shifts,
         )
         status = "ok"
         error = None
@@ -199,6 +206,7 @@ def run_batch(
     system_id_col: str = "system_id",
     jobs: int = 1,
     skip_existing: bool = False,
+    fix_shifts: bool = False,
 ) -> pd.DataFrame:
     output_root = Path(output_root)
     output_root.mkdir(parents=True, exist_ok=True)
@@ -217,6 +225,7 @@ def run_batch(
             "longitude": longitude,
             "lat_lon_map": lat_lon_map,
             "skip_existing": skip_existing,
+            "fix_shifts": fix_shifts,
         }
         for p in inputs
     ]

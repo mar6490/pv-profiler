@@ -60,9 +60,9 @@ def build_parser() -> argparse.ArgumentParser:
     block2_parser.add_argument("--output-dir", required=True, help="Directory for Block 2 artifacts")
     block2_parser.add_argument("--solver", default="CLARABEL", help="SDT solver passed to DataHandler.run_pipeline")
     block2_parser.add_argument(
-        "--no-fix-shifts",
+        "--fix-shifts",
         action="store_true",
-        help="Disable SDT timestamp shift correction",
+        help="Enable SDT timestamp shift correction (default: off)",
     )
     block2_parser.add_argument("--power-col", default="power", help="Power column for parquet input")
     block2_parser.add_argument("--timestamp-col", default="timestamp", help="Timestamp column for CSV input")
@@ -164,6 +164,7 @@ def build_parser() -> argparse.ArgumentParser:
     batch_parser.add_argument("--system-id-col", default="system_id")
     batch_parser.add_argument("--jobs", type=int, default=1)
     batch_parser.add_argument("--skip-existing", action="store_true")
+    batch_parser.add_argument("--fix-shifts", action="store_true")
 
     return parser
 
@@ -210,7 +211,7 @@ def main() -> int:
         return 0
 
     if args.command == "run-block2":
-        fix_shifts = not args.no_fix_shifts
+        fix_shifts = args.fix_shifts
         if args.input_parquet:
             result = run_block2_sdt_from_parquet(
                 input_parquet=args.input_parquet,
@@ -335,6 +336,7 @@ def main() -> int:
             system_id_col=args.system_id_col,
             jobs=args.jobs,
             skip_existing=args.skip_existing,
+            fix_shifts=args.fix_shifts,
         )
         print(summary[[c for c in ["system_id", "status", "runtime_seconds"] if c in summary.columns]].to_string(index=False))
         return 0
