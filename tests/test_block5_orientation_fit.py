@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import pvlib
 
-from pv_profiler.block_orientation_fit import _optimal_weight, _two_plane_azimuths, run_block5_from_files, run_block5_orientation_fit
+from pv_profiler.block_orientation_fit import _cyclic_azimuth_candidates, _optimal_weight, _two_plane_azimuths, run_block5_from_files, run_block5_orientation_fit
 
 
 def _daily_quantile_normalize(series: pd.Series, q: float = 0.995) -> pd.Series:
@@ -187,6 +187,11 @@ def test_plot_script_generates_expected_files(tmp_path):
     assert (out_dir / "plot_residual_vs_time.png").exists()
     assert (out_dir / "plot_rmse_vs_azimuth.png").exists()
     assert (out_dir / "block5_diagnostics.pdf").exists()
+
+
+def test_cyclic_azimuth_candidates_wraparound():
+    assert _cyclic_azimuth_candidates(2, half_window_deg=5) == [357, 358, 359, 0, 1, 2, 3, 4, 5, 6, 7]
+    assert _cyclic_azimuth_candidates(358, half_window_deg=5) == [353, 354, 355, 356, 357, 358, 359, 0, 1, 2, 3]
 
 
 def test_two_plane_azimuth_half_delta_semantics():

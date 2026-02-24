@@ -61,6 +61,10 @@ def _minute_of_day(index: pd.DatetimeIndex) -> pd.Index:
     return pd.Index(index.hour * 60 + index.minute, name="minute_of_day")
 
 
+def _cyclic_azimuth_candidates(center_deg: int, half_window_deg: int = 5) -> list[int]:
+    return [int((int(center_deg) + d) % 360) for d in range(-int(half_window_deg), int(half_window_deg) + 1)]
+
+
 def _poa_single(
     solar_position: pd.DataFrame,
     clearsky: pd.DataFrame,
@@ -157,7 +161,7 @@ def run_block5_orientation_fit(
     records: list[dict] = []
 
     tilts = np.arange(0, 61, tilt_step)
-    azimuths = np.arange(60, 301, az_step)
+    azimuths = np.arange(0, 360, az_step)
 
     t0 = time.perf_counter()
     best_single: OrientationCandidate | None = None
@@ -186,7 +190,7 @@ def run_block5_orientation_fit(
     t0s = int(round(best_single.params["tilt_deg"]))
     a0s = int(round(best_single.params["azimuth_deg"]))
     for tilt in np.arange(max(0, t0s - 5), min(60, t0s + 5) + 1, 1):
-        for az in np.arange(max(60, a0s - 5), min(300, a0s + 5) + 1, 1):
+        for az in _cyclic_azimuth_candidates(a0s, half_window_deg=5):
             poa = _poa_single(solar_position, clearsky, tilt=tilt, azimuth=az, dni_extra=dni_extra)
             p_hat = _daily_normalize(poa, quantile=quantile, norm_mode=norm_mode)
             rmse, bic = _evaluate_candidate_samples(observed_arr, p_hat, k=2)
@@ -211,7 +215,7 @@ def run_block5_orientation_fit(
     t0 = time.perf_counter()
     best_two: OrientationCandidate | None = None
     if run_two_plane:
-        centers = np.arange(60, 301, az_step)
+        centers = np.arange(0, 360, az_step)
         for tilt in tilts:
             for center in centers:
                 az_e, az_w = _two_plane_azimuths(center, two_plane_half_delta_az_deg)
@@ -291,7 +295,7 @@ def run_block5_orientation_fit(
         "grid_spec": {
             "tilt_range": [0, 60],
             "tilt_step": int(tilt_step),
-            "azimuth_range": [60, 300],
+            "azimuth_range": [0, 359],
             "azimuth_step": int(az_step),
             "two_plane_half_delta_az_deg": float(two_plane_half_delta_az_deg),
             "two_plane_weight_mode": two_plane_weight_mode,
