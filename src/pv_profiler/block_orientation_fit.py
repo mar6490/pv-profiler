@@ -271,7 +271,13 @@ def run_block5_orientation_fit(
                     best_two = cand
     t_coarse_two_plane = time.perf_counter() - t0
 
-    choose_two = run_two_plane and best_two is not None and (best_two.rmse < best_single.rmse * 0.90) and (best_two.bic < best_single.bic)
+    # Model selection based solely on Bayesian Information Criterion (BIC).
+    # Lower BIC indicates preferred model after penalizing model complexity.
+    choose_two = (
+        run_two_plane
+        and best_two is not None
+        and best_two.bic < best_single.bic
+    )
     winner = best_two if choose_two else best_single
 
     timing = {
