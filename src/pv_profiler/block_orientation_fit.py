@@ -8,6 +8,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pvlib
+import matplotlib.pyplot as plt
 
 
 @dataclass
@@ -215,28 +216,28 @@ def run_block5_orientation_fit(
     t0 = time.perf_counter()
     best_two: OrientationCandidate | None = None
     if run_two_plane:
-        centers = np.arange(0, 360, az_step)
+        centers = np.arange(0, 180, az_step)
         for tilt in tilts:
             for center in centers:
                 az_e, az_w = _two_plane_azimuths(center, two_plane_half_delta_az_deg)
                 poa_e = _poa_single(solar_position, clearsky, tilt=tilt, azimuth=az_e, dni_extra=dni_extra)
                 poa_w = _poa_single(solar_position, clearsky, tilt=tilt, azimuth=az_w, dni_extra=dni_extra)
 
-                p1_norm = _daily_normalize(poa_e, quantile=quantile, norm_mode=norm_mode)
-                p2_norm = _daily_normalize(poa_w, quantile=quantile, norm_mode=norm_mode)
-
                 if two_plane_weight_mode == "analytic_optimum":
+                    p1_norm_for_weight = _daily_normalize(poa_e, quantile=quantile, norm_mode=norm_mode)
+                    p2_norm_for_weight = _daily_normalize(poa_w, quantile=quantile, norm_mode=norm_mode)
                     w_opt = _optimal_weight(
                         observed_arr,
-                        p1_norm.to_numpy(dtype=float),
-                        p2_norm.to_numpy(dtype=float),
+                        p1_norm_for_weight.to_numpy(dtype=float),
+                        p2_norm_for_weight.to_numpy(dtype=float),
                     )
                     k_two = 3
                 else:
                     w_opt = 0.5
                     k_two = 2
 
-                p_mix = w_opt * p1_norm + (1 - w_opt) * p2_norm
+                p_mix_raw = w_opt * poa_e + (1 - w_opt) * poa_w
+                p_mix = _daily_normalize(p_mix_raw, quantile=quantile, norm_mode=norm_mode)
 
                 rmse, bic = _evaluate_candidate_samples(observed_arr, p_mix, k=k_two)
                 records.append(
@@ -301,7 +302,7 @@ def run_block5_orientation_fit(
         "grid_spec": {
             "tilt_range": [0, 60],
             "tilt_step": int(tilt_step),
-            "azimuth_range": [0, 359],
+            "azimuth_range": [0, 179],
             "azimuth_step": int(az_step),
             "two_plane_half_delta_az_deg": float(two_plane_half_delta_az_deg),
             "two_plane_weight_mode": two_plane_weight_mode,
@@ -351,9 +352,8 @@ def run_block5_orientation_fit(
             azimuth=winner.params["azimuth_west_deg"],
             dni_extra=dni_extra,
         )
-        p1_norm = _daily_normalize(poa_e, quantile=quantile, norm_mode=norm_mode)
-        p2_norm = _daily_normalize(poa_w, quantile=quantile, norm_mode=norm_mode)
-        pred = winner.params["weight_opt"] * p1_norm + (1 - winner.params["weight_opt"]) * p2_norm
+        p_mix_raw = winner.params["weight_opt"] * poa_e + (1 - winner.params["weight_opt"]) * poa_w
+        pred = _daily_normalize(p_mix_raw, quantile=quantile, norm_mode=norm_mode)
     if winner.model_type == "single":
         pred = _daily_normalize(poa, quantile=quantile, norm_mode=norm_mode)
     pred_prof = pred.groupby(_minute_of_day(pred.index)).median().rename("predicted_p_norm")
@@ -423,4 +423,17 @@ def run_block5_from_files(
     single_full.to_csv(out / "09a_orientation_single_full_grid.csv", index=False)
     two_plane_full.to_csv(out / "09b_orientation_two_plane_full_grid.csv", index=False)
     profile_compare.to_csv(out / "10_profile_compare.csv", index=False)
+    residual_profile = profile_compare.copy()
+    residual_profile["residual"] = residual_profile["observed_p_norm"] - residual_profile["predicted_p_norm"]
+    residual_profile.to_csv(out / "11_residual_profile.csv", index=False)
+
+    fig, ax = plt.subplots(figsize=(8, 4))
+    ax.plot(residual_profile["minute_of_day"], residual_profile["residual"])
+    ax.axhline(0.0, color="black", linewidth=1)
+    ax.set_xlabel("minute_of_day")
+    ax.set_ylabel("residual")
+    ax.set_title("Residual Profile")
+    fig.tight_layout()
+    fig.savefig(out / "11_residual_profile.png", dpi=150)
+    plt.close(fig)
     return result

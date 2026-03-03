@@ -311,3 +311,88 @@ def test_two_plane_analytic_optimum_uses_weight_optimization(monkeypatch):
     assert 3 in seen_k
     if not two_full.empty:
         assert set(two_full["weight_mode"]) == {"analytic_optimum"}
+
+
+def test_two_plane_mix_then_normalize(monkeypatch):
+    idx = pd.date_range("2020-01-01", periods=24, freq="h")
+    df = pd.DataFrame({"p_norm": np.linspace(0, 1, len(idx))}, index=idx)
+
+    calls = {"daily": 0}
+
+    def fake_poa_single(solar_position, clearsky, tilt, azimuth, dni_extra):
+        base = 1.0 if int(azimuth) % 360 < 180 else 2.0
+        return pd.Series(np.full(len(idx), base), index=idx)
+
+    def spy_daily_normalize(poa, quantile, norm_mode):
+        calls["daily"] += 1
+        return poa
+
+    def fake_eval(observed, pred, k):
+        return 0.5, 1.0
+
+    monkeypatch.setattr("pv_profiler.block_orientation_fit._poa_single", fake_poa_single)
+    monkeypatch.setattr("pv_profiler.block_orientation_fit._daily_normalize", spy_daily_normalize)
+    monkeypatch.setattr("pv_profiler.block_orientation_fit._evaluate_candidate_samples", fake_eval)
+    monkeypatch.setattr("pv_profiler.block_orientation_fit._cyclic_azimuth_candidates", lambda center_deg, half_window_deg=5: [center_deg % 360])
+
+    run_block5_orientation_fit(
+        df,
+        latitude=52.45544,
+        longitude=13.52481,
+        timezone="Etc/GMT-1",
+        tilt_step=61,
+        az_step=180,
+        two_plane_weight_mode="fixed_50_50",
+    )
+
+    # expected calls with current setup:
+    # single coarse: 2, single fine: 6, two-plane mix normalize: 1, winner profile normalize(single): 1
+    assert calls["daily"] == 10
+
+
+def test_center_searchspace_canonical_0_180(tmp_path):
+    lat, lon = 52.45544, 13.52481
+    df = _make_synthetic_two_plane(lat, lon, tilt=20, center=180, w=0.5)
+    input_parquet = tmp_path / "07_p_norm_clear.parquet"
+    df.to_parquet(input_parquet)
+
+    out_dir = tmp_path / "out"
+    run_block5_from_files(
+        input_p_norm_parquet=input_parquet,
+        output_dir=out_dir,
+        latitude=lat,
+        longitude=lon,
+        tilt_step=20,
+        az_step=10,
+        topk=5,
+    )
+
+    two_full = pd.read_csv(out_dir / "09b_orientation_two_plane_full_grid.csv")
+    if not two_full.empty:
+        assert (two_full["azimuth_center_deg"] >= 0).all()
+        assert (two_full["azimuth_center_deg"] < 180).all()
+
+
+def test_residual_artifacts_written(tmp_path):
+    lat, lon = 52.45544, 13.52481
+    df = _make_synthetic_single(lat, lon, tilt=25, azimuth=200)
+    input_parquet = tmp_path / "07_p_norm_clear.parquet"
+    out_dir = tmp_path / "out"
+    df.to_parquet(input_parquet)
+
+    run_block5_from_files(
+        input_p_norm_parquet=input_parquet,
+        output_dir=out_dir,
+        latitude=lat,
+        longitude=lon,
+        tilt_step=20,
+        az_step=20,
+        topk=5,
+    )
+
+    csv_path = out_dir / "11_residual_profile.csv"
+    png_path = out_dir / "11_residual_profile.png"
+    assert csv_path.exists()
+    assert png_path.exists()
+    r = pd.read_csv(csv_path)
+    assert {"minute_of_day", "observed_p_norm", "predicted_p_norm", "residual"}.issubset(r.columns)

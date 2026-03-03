@@ -184,6 +184,8 @@ pv-ident run-block5 \
 
 Standard: Two-Plane nutzt `fixed_50_50` (50/50) ohne LS-Gewichtsschätzung. Optional kann LS aktiviert werden mit `--two-plane-weight-mode analytic_optimum`.
 
+Hinweis: Two-Plane normalisiert jetzt das gemischte Profil (East/West zuerst mischen, dann pro Tag normalisieren), nicht mehr jede Seite separat.
+
 ---
 
 ## Eingabedaten richtig vorbereiten
