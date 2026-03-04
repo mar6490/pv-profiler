@@ -195,6 +195,12 @@ pv-ident make-diagnostics \
   --system-id-col system_id
 ```
 
+Optional Health-Plots explizit aktivieren:
+
+```bash
+pv-ident make-diagnostics --output-root outputs/batch --health-plots
+```
+
 Output unter `outputs/batch/diagnostics_v2/`:
 
 - `aggregated_metrics.csv`

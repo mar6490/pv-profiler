@@ -24,9 +24,7 @@ KEY_FILES = [
 
 def _parse_system_id(name: str) -> int | None:
     digits = "".join(ch for ch in name if ch.isdigit())
-    if not digits:
-        return None
-    return int(digits)
+    return int(digits) if digits else None
 
 
 def _safe_read_json(path: Path) -> dict:
@@ -99,16 +97,17 @@ def _best_by(df: pd.DataFrame, col: str) -> pd.Series | None:
     vals = pd.to_numeric(df[col], errors="coerce")
     if vals.isna().all():
         return None
-    idx = vals.idxmin()
-    return df.loc[idx]
+    return df.loc[vals.idxmin()]
 
 
-def _metadata_true_cols(df: pd.DataFrame) -> tuple[str | None, str | None]:
+def _metadata_true_cols(df: pd.DataFrame) -> tuple[str | None, str | None, str | None]:
     tilt_candidates = ["tilt_true", "true_tilt", "tilt_deg_true"]
     center_candidates = ["center_true", "azimuth_center_true", "true_center", "az_center_true"]
+    azimuth_candidates = ["azimuth_true", "true_azimuth", "az_true", "azimuth_deg_true"]
     tilt_col = next((c for c in tilt_candidates if c in df.columns), None)
     center_col = next((c for c in center_candidates if c in df.columns), None)
-    return tilt_col, center_col
+    azimuth_col = next((c for c in azimuth_candidates if c in df.columns), None)
+    return tilt_col, center_col, azimuth_col
 
 
 def _fold_center_0_180(v: float | int | None) -> float | None:
@@ -192,6 +191,64 @@ def _plot_landscape(
     plt.close(fig)
 
 
+def _plot_1d_combo(
+    *,
+    df: pd.DataFrame,
+    x_col: str,
+    out: Path,
+    title: str,
+    true_x: float | None,
+    x_label: str,
+) -> None:
+    if not {x_col, "rmse", "bic"}.issubset(df.columns):
+        return
+    d = df[[x_col, "rmse", "bic"]].copy()
+    d[x_col] = pd.to_numeric(d[x_col], errors="coerce")
+    d["rmse"] = pd.to_numeric(d["rmse"], errors="coerce")
+    d["bic"] = pd.to_numeric(d["bic"], errors="coerce")
+    d = d.dropna(subset=[x_col, "rmse", "bic"])
+    if d.empty:
+        return
+
+    rmse_by_x = d.groupby(x_col, as_index=True)["rmse"].min().sort_index()
+    bic_by_x = d.groupby(x_col, as_index=True)["bic"].min().sort_index()
+    if rmse_by_x.empty or bic_by_x.empty:
+        return
+
+    x_rmse = rmse_by_x.index.to_numpy(dtype=float)
+    y_rmse = rmse_by_x.to_numpy(dtype=float)
+    x_bic = bic_by_x.index.to_numpy(dtype=float)
+    y_bic = bic_by_x.to_numpy(dtype=float)
+
+    fig, ax1 = plt.subplots(figsize=(7, 4))
+    l1 = ax1.plot(x_rmse, y_rmse, color="tab:blue", label="rmse_min")
+    ax1.set_xlabel(x_label)
+    ax1.set_ylabel("rmse_min", color="tab:blue")
+    ax1.tick_params(axis="y", labelcolor="tab:blue")
+
+    ax2 = ax1.twinx()
+    l2 = ax2.plot(x_bic, y_bic, color="tab:red", label="bic_min")
+    ax2.set_ylabel("bic_min", color="tab:red")
+    ax2.tick_params(axis="y", labelcolor="tab:red")
+
+    best_rmse_x = float(x_rmse[np.argmin(y_rmse)])
+    best_bic_x = float(x_bic[np.argmin(y_bic)])
+    ax1.axvline(best_rmse_x, color="tab:blue", linestyle="--", linewidth=1.0, label="best RMSE")
+    ax2.axvline(best_bic_x, color="tab:red", linestyle=":", linewidth=1.0, label="best BIC")
+
+    if true_x is not None and not pd.isna(true_x):
+        ax1.axvline(float(true_x), color="black", linestyle="-", linewidth=1.0, label="true")
+
+    lines = l1 + l2
+    labels = [ln.get_label() for ln in lines]
+    ax1.legend(lines, labels, loc="best")
+
+    ax1.set_title(title)
+    fig.tight_layout()
+    fig.savefig(out, dpi=150)
+    plt.close(fig)
+
+
 def _model_choice_color(s: pd.Series) -> np.ndarray:
     vals = s.astype(str)
     out = np.where(vals == "two_plane", 1, np.where(vals == "single", 0, -1))
@@ -203,6 +260,7 @@ def generate_diagnostics_v2(
     output_root: str | Path,
     systems_metadata_csv: str | Path | None = None,
     system_id_col: str = "system_id",
+    health_plots: bool = False,
 ) -> pd.DataFrame:
     output_root = Path(output_root)
     diag_root = output_root / "diagnostics_v2"
@@ -264,16 +322,20 @@ def generate_diagnostics_v2(
 
         true_tilt = None
         true_center = None
+        true_azimuth = None
         if metadata_df is not None and system_id_col in metadata_df.columns and system_id is not None:
             m = metadata_df[pd.to_numeric(metadata_df[system_id_col], errors="coerce") == float(system_id)]
             if not m.empty:
-                t_col, c_col = _metadata_true_cols(m)
+                t_col, c_col, a_col = _metadata_true_cols(m)
                 if t_col is not None:
                     true_tilt = pd.to_numeric(m.iloc[0][t_col], errors="coerce")
                     row["tilt_true"] = true_tilt
                 if c_col is not None:
                     true_center = pd.to_numeric(m.iloc[0][c_col], errors="coerce")
                     row["center_true"] = true_center
+                if a_col is not None:
+                    true_azimuth = pd.to_numeric(m.iloc[0][a_col], errors="coerce")
+                    row["azimuth_true"] = true_azimuth
 
         single_df = None
         if single_grid_path.exists():
@@ -313,10 +375,11 @@ def generate_diagnostics_v2(
 
         sys_out = per_system_root / system_dir.name
         sys_out.mkdir(parents=True, exist_ok=True)
-        _plot_presence_bar({f: (system_dir / f).exists() for f in KEY_FILES}, sys_out / "artifact_presence.png")
-        _plot_daily_flags(system_dir / "02_sdt_daily_flags.csv", sys_out / "daily_flags.png")
+        if health_plots:
+            _plot_presence_bar({f: (system_dir / f).exists() for f in KEY_FILES}, sys_out / "artifact_presence.png")
+            _plot_daily_flags(system_dir / "02_sdt_daily_flags.csv", sys_out / "daily_flags.png")
 
-        if single_df is not None and two_df is not None:
+        if single_df is not None:
             _plot_landscape(
                 df=single_df,
                 x_col="azimuth_deg",
@@ -324,7 +387,7 @@ def generate_diagnostics_v2(
                 val_col="rmse",
                 out=sys_out / "rmse_single_landscape.png",
                 title="Single-plane RMSE landscape",
-                true_x=_fold_center_0_180(true_center) if true_center is not None else None,
+                true_x=float(true_azimuth) if true_azimuth is not None and not pd.isna(true_azimuth) else None,
                 true_y=float(true_tilt) if true_tilt is not None and not pd.isna(true_tilt) else None,
             )
             _plot_landscape(
@@ -334,9 +397,21 @@ def generate_diagnostics_v2(
                 val_col="bic",
                 out=sys_out / "bic_single_landscape.png",
                 title="Single-plane BIC landscape",
-                true_x=_fold_center_0_180(true_center) if true_center is not None else None,
+                true_x=float(true_azimuth) if true_azimuth is not None and not pd.isna(true_azimuth) else None,
                 true_y=float(true_tilt) if true_tilt is not None and not pd.isna(true_tilt) else None,
             )
+            _plot_1d_combo(
+                df=single_df,
+                x_col="azimuth_deg",
+                out=sys_out / "single_1d_azimuth_rmse_bic.png",
+                title="Single-plane min-over-tilt by azimuth",
+                true_x=float(true_azimuth) if true_azimuth is not None and not pd.isna(true_azimuth) else None,
+                x_label="azimuth_deg",
+            )
+        else:
+            print(f"[make-diagnostics] warning: skipping single-plane landscapes/1D for {system_dir.name}")
+
+        if two_df is not None:
             _plot_landscape(
                 df=two_df,
                 x_col="azimuth_center_deg",
@@ -357,8 +432,16 @@ def generate_diagnostics_v2(
                 true_x=_fold_center_0_180(true_center) if true_center is not None else None,
                 true_y=float(true_tilt) if true_tilt is not None and not pd.isna(true_tilt) else None,
             )
+            _plot_1d_combo(
+                df=two_df,
+                x_col="azimuth_center_deg",
+                out=sys_out / "two_plane_1d_center_rmse_bic.png",
+                title="Two-plane min-over-tilt by center",
+                true_x=_fold_center_0_180(true_center) if true_center is not None else None,
+                x_label="azimuth_center_deg",
+            )
         else:
-            print(f"[make-diagnostics] warning: skipping landscape plots for {system_dir.name} (missing one or both full-grid CSVs)")
+            print(f"[make-diagnostics] warning: skipping two-plane landscapes/1D for {system_dir.name}")
 
         rows.append(row)
 
@@ -373,8 +456,6 @@ def generate_diagnostics_v2(
     summary.to_csv(diag_root / "aggregated_metrics.csv", index=False)
 
     if not summary.empty:
-        _plot_status_counts(summary, global_root / "status_counts.png")
-        _plot_hist(summary, "runtime_seconds", global_root / "runtime_hist.png", "Runtime distribution")
         _plot_hist(summary, "delta_rmse", global_root / "hist_delta_rmse.png", "Delta RMSE (two - single)")
         _plot_hist(summary, "delta_bic", global_root / "hist_delta_bic.png", "Delta BIC (two - single)")
 
@@ -410,5 +491,9 @@ def generate_diagnostics_v2(
                 fig.tight_layout()
                 fig.savefig(global_root / "model_choice_map.png", dpi=150)
                 plt.close(fig)
+
+        if health_plots:
+            _plot_status_counts(summary, global_root / "status_counts.png")
+            _plot_hist(summary, "runtime_seconds", global_root / "runtime_hist.png", "Runtime distribution")
 
     return summary
