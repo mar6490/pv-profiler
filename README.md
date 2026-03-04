@@ -195,17 +195,12 @@ pv-ident make-diagnostics \
   --system-id-col system_id
 ```
 
-Optional Health-Plots explizit aktivieren:
-
-```bash
-pv-ident make-diagnostics --output-root outputs/batch --health-plots
-```
 
 Output unter `outputs/batch/diagnostics_v2/`:
 
 - `aggregated_metrics.csv`
-- `global/*.png` (z. B. Status/RMSE/Runtime-Verteilungen)
-- `per_system/system_XXX/*.png` (z. B. Artefakt-Präsenz und Daily-Flags)
+- `global/*.png` (Model-Selection: `hist_delta_rmse`, `hist_delta_bic`, `scatter_delta_rmse_vs_delta_bic`, optional `model_choice_map`)
+- `per_system/system_XXX/*.png` (Model-Selection-Landschaften und 1D-RMSE/BIC-Kurven)
 
 Hinweis: Two-Plane normalisiert jetzt das gemischte Profil (East/West zuerst mischen, dann pro Tag normalisieren), nicht mehr jede Seite separat.
 

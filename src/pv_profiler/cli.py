@@ -185,7 +185,6 @@ def build_parser() -> argparse.ArgumentParser:
     diagnostics_parser.add_argument("--output-root", required=True)
     diagnostics_parser.add_argument("--systems-metadata-csv", default=None)
     diagnostics_parser.add_argument("--system-id-col", default="system_id")
-    diagnostics_parser.add_argument("--health-plots", action="store_true", help="Generate optional health plots")
 
     return parser
 
@@ -369,7 +368,6 @@ def main() -> int:
             output_root=args.output_root,
             systems_metadata_csv=args.systems_metadata_csv,
             system_id_col=args.system_id_col,
-            health_plots=args.health_plots,
         )
         print(
             summary[

@@ -23,8 +23,6 @@ def _prepare_fixture(tmp_path):
         json.dumps({"model_type": "single", "tilt_deg": 20.0, "azimuth_deg": 180.0, "score_rmse": 0.12}),
         encoding="utf-8",
     )
-    pd.DataFrame({"day": ["2015-01-01"], "is_clear": [True]}).to_csv(s1 / "02_sdt_daily_flags.csv", index=False)
-
     pd.DataFrame(
         {
             "tilt_deg": [10, 10, 20, 20],
@@ -110,9 +108,3 @@ def test_generate_diagnostics_v2_core_plots_default_and_health_opt_in(tmp_path):
     assert not (out / "diagnostics_v2" / "per_system" / "system_001" / "artifact_presence.png").exists()
     assert not (out / "diagnostics_v2" / "per_system" / "system_001" / "daily_flags.png").exists()
 
-    # opt-in health plots
-    generate_diagnostics_v2(output_root=out, systems_metadata_csv=meta, system_id_col="system_id", health_plots=True)
-    assert (out / "diagnostics_v2" / "global" / "runtime_hist.png").exists()
-    assert (out / "diagnostics_v2" / "global" / "status_counts.png").exists()
-    assert (out / "diagnostics_v2" / "per_system" / "system_001" / "artifact_presence.png").exists()
-    assert (out / "diagnostics_v2" / "per_system" / "system_001" / "daily_flags.png").exists()
