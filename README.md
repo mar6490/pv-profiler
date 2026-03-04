@@ -184,6 +184,23 @@ pv-ident run-block5 \
 
 Standard: Two-Plane nutzt `fixed_50_50` (50/50) ohne LS-Gewichtsschätzung. Optional kann LS aktiviert werden mit `--two-plane-weight-mode analytic_optimum`.
 
+### 4) `make-diagnostics`
+
+Erstellt eine zusammengefasste Diagnostik über einen bestehenden Batch-Output:
+
+```bash
+pv-ident make-diagnostics \
+  --output-root outputs/batch \
+  --systems-metadata-csv path/to/systems_metadata.csv \
+  --system-id-col system_id
+```
+
+Output unter `outputs/batch/diagnostics_v2/`:
+
+- `aggregated_metrics.csv`
+- `global/*.png` (z. B. Status/RMSE/Runtime-Verteilungen)
+- `per_system/system_XXX/*.png` (z. B. Artefakt-Präsenz und Daily-Flags)
+
 Hinweis: Two-Plane normalisiert jetzt das gemischte Profil (East/West zuerst mischen, dann pro Tag normalisieren), nicht mehr jede Seite separat.
 
 ---

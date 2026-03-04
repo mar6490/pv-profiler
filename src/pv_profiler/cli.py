@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from .batch import run_batch
+from .diagnostics_v2 import generate_diagnostics_v2
 from .pipeline import (
     run_block1_input_loader,
     run_block2_sdt_from_csv,
@@ -176,6 +177,14 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["fixed_50_50", "analytic_optimum"],
         default="fixed_50_50",
     )
+
+    diagnostics_parser = sub.add_parser(
+        "make-diagnostics",
+        help="Create diagnostics_v2 summary tables and plots from a run-batch output root",
+    )
+    diagnostics_parser.add_argument("--output-root", required=True)
+    diagnostics_parser.add_argument("--systems-metadata-csv", default=None)
+    diagnostics_parser.add_argument("--system-id-col", default="system_id")
 
     return parser
 
@@ -352,6 +361,23 @@ def main() -> int:
             two_plane_weight_mode=args.two_plane_weight_mode,
         )
         print(summary[[c for c in ["system_id", "status", "runtime_seconds"] if c in summary.columns]].to_string(index=False))
+        return 0
+
+    if args.command == "make-diagnostics":
+        summary = generate_diagnostics_v2(
+            output_root=args.output_root,
+            systems_metadata_csv=args.systems_metadata_csv,
+            system_id_col=args.system_id_col,
+        )
+        print(
+            summary[
+                [
+                    c
+                    for c in ["system_dir", "system_id", "status", "runtime_seconds", "model_type", "score_rmse"]
+                    if c in summary.columns
+                ]
+            ].to_string(index=False)
+        )
         return 0
 
     parser.error(f"Unknown command: {args.command}")
