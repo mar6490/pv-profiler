@@ -7,8 +7,8 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
-
 
 KEY_FILES = [
     "00_status.json",
@@ -17,6 +17,8 @@ KEY_FILES = [
     "05_power_fit.parquet",
     "07_p_norm_clear.parquet",
     "08_orientation_result.json",
+    "09a_orientation_single_full_grid.csv",
+    "09b_orientation_two_plane_full_grid.csv",
 ]
 
 
@@ -51,20 +53,6 @@ def _plot_hist(df: pd.DataFrame, col: str, out: Path, title: str) -> None:
     ax.set_title(title)
     ax.set_xlabel(col)
     ax.set_ylabel("count")
-    fig.tight_layout()
-    fig.savefig(out, dpi=150)
-    plt.close(fig)
-
-
-def _plot_scatter(df: pd.DataFrame, x: str, y: str, out: Path, title: str) -> None:
-    tmp = pd.DataFrame({x: pd.to_numeric(df[x], errors="coerce"), y: pd.to_numeric(df[y], errors="coerce")}).dropna()
-    if tmp.empty:
-        return
-    fig, ax = plt.subplots()
-    ax.scatter(tmp[x], tmp[y], s=14)
-    ax.set_xlabel(x)
-    ax.set_ylabel(y)
-    ax.set_title(title)
     fig.tight_layout()
     fig.savefig(out, dpi=150)
     plt.close(fig)
@@ -105,6 +93,111 @@ def _plot_daily_flags(flags_csv: Path, out: Path) -> None:
     plt.close(fig)
 
 
+def _best_by(df: pd.DataFrame, col: str) -> pd.Series | None:
+    if col not in df.columns or df.empty:
+        return None
+    vals = pd.to_numeric(df[col], errors="coerce")
+    if vals.isna().all():
+        return None
+    idx = vals.idxmin()
+    return df.loc[idx]
+
+
+def _metadata_true_cols(df: pd.DataFrame) -> tuple[str | None, str | None]:
+    tilt_candidates = ["tilt_true", "true_tilt", "tilt_deg_true"]
+    center_candidates = ["center_true", "azimuth_center_true", "true_center", "az_center_true"]
+    tilt_col = next((c for c in tilt_candidates if c in df.columns), None)
+    center_col = next((c for c in center_candidates if c in df.columns), None)
+    return tilt_col, center_col
+
+
+def _fold_center_0_180(v: float | int | None) -> float | None:
+    if v is None or pd.isna(v):
+        return None
+    return float(v) % 180.0
+
+
+def _plot_landscape(
+    *,
+    df: pd.DataFrame,
+    x_col: str,
+    y_col: str,
+    val_col: str,
+    out: Path,
+    title: str,
+    true_x: float | None,
+    true_y: float | None,
+) -> None:
+    required = {x_col, y_col, val_col}
+    if not required.issubset(df.columns):
+        return
+
+    cols = [x_col, y_col, val_col, "rmse", "bic"]
+    dd = df.loc[:, [c for c in dict.fromkeys(cols) if c in df.columns]].copy()
+    dd[x_col] = pd.to_numeric(dd[x_col], errors="coerce")
+    dd[y_col] = pd.to_numeric(dd[y_col], errors="coerce")
+    dd[val_col] = pd.to_numeric(dd[val_col], errors="coerce")
+    dd = dd.dropna(subset=[x_col, y_col, val_col])
+    if dd.empty:
+        return
+
+    pivot = dd.pivot_table(index=y_col, columns=x_col, values=val_col, aggfunc="min").sort_index().sort_index(axis=1)
+    if pivot.empty:
+        return
+
+    x_vals = pivot.columns.to_numpy(dtype=float)
+    y_vals = pivot.index.to_numpy(dtype=float)
+
+    fig, ax = plt.subplots(figsize=(6, 4.5))
+    mesh = ax.pcolormesh(x_vals, y_vals, pivot.to_numpy(dtype=float), shading="auto")
+    cbar = fig.colorbar(mesh, ax=ax)
+    cbar.set_label(val_col)
+    ax.set_xlabel(x_col)
+    ax.set_ylabel(y_col)
+    ax.set_title(title)
+
+    best_rmse = _best_by(dd, "rmse")
+    if best_rmse is not None:
+        ax.scatter(
+            [pd.to_numeric(best_rmse[x_col], errors="coerce")],
+            [pd.to_numeric(best_rmse[y_col], errors="coerce")],
+            marker="*",
+            s=120,
+            color="white",
+            edgecolors="black",
+            linewidths=0.8,
+            label="best RMSE",
+        )
+
+    best_bic = _best_by(dd, "bic")
+    if best_bic is not None:
+        ax.scatter(
+            [pd.to_numeric(best_bic[x_col], errors="coerce")],
+            [pd.to_numeric(best_bic[y_col], errors="coerce")],
+            marker="x",
+            s=70,
+            color="black",
+            linewidths=1.2,
+            label="best BIC",
+        )
+
+    if true_x is not None and true_y is not None:
+        ax.scatter([true_x], [true_y], marker="o", s=80, facecolors="none", edgecolors="cyan", linewidths=1.6, label="true")
+
+    if ax.get_legend_handles_labels()[0]:
+        ax.legend(loc="best")
+
+    fig.tight_layout()
+    fig.savefig(out, dpi=150)
+    plt.close(fig)
+
+
+def _model_choice_color(s: pd.Series) -> np.ndarray:
+    vals = s.astype(str)
+    out = np.where(vals == "two_plane", 1, np.where(vals == "single", 0, -1))
+    return out.astype(float)
+
+
 def generate_diagnostics_v2(
     *,
     output_root: str | Path,
@@ -118,14 +211,17 @@ def generate_diagnostics_v2(
     per_system_root.mkdir(parents=True, exist_ok=True)
     global_root.mkdir(parents=True, exist_ok=True)
 
-    rows: list[dict] = []
-    for system_dir in sorted([p for p in output_root.iterdir() if p.is_dir()]):
-        if system_dir.name == "diagnostics_v2":
-            continue
+    metadata_df: pd.DataFrame | None = None
+    if systems_metadata_csv is not None:
+        metadata_df = pd.read_csv(systems_metadata_csv)
 
+    rows: list[dict] = []
+    for system_dir in sorted(p for p in output_root.iterdir() if p.is_dir() and p.name != "diagnostics_v2"):
         system_id = _parse_system_id(system_dir.name)
         status_path = system_dir / "00_status.json"
         orient_path = system_dir / "08_orientation_result.json"
+        single_grid_path = system_dir / "09a_orientation_single_full_grid.csv"
+        two_grid_path = system_dir / "09b_orientation_two_plane_full_grid.csv"
 
         if not status_path.exists():
             print(f"[make-diagnostics] warning: missing {status_path}")
@@ -150,32 +246,169 @@ def generate_diagnostics_v2(
             "weight_east": orient.get("weight_east"),
             "score_rmse": orient.get("score_rmse"),
             "score_bic": orient.get("score_bic"),
+            "best_single_rmse": np.nan,
+            "best_single_bic": np.nan,
+            "best_single_tilt_rmse": np.nan,
+            "best_single_az_rmse": np.nan,
+            "best_two_rmse": np.nan,
+            "best_two_bic": np.nan,
+            "best_two_tilt_rmse": np.nan,
+            "best_two_center_rmse": np.nan,
+            "delta_rmse": np.nan,
+            "delta_bic": np.nan,
+            "rmse_prefers_two_plane": np.nan,
+            "bic_prefers_two_plane": np.nan,
         }
         for f in KEY_FILES:
             row[f"has_{f}"] = (system_dir / f).exists()
-        rows.append(row)
+
+        true_tilt = None
+        true_center = None
+        if metadata_df is not None and system_id_col in metadata_df.columns and system_id is not None:
+            m = metadata_df[pd.to_numeric(metadata_df[system_id_col], errors="coerce") == float(system_id)]
+            if not m.empty:
+                t_col, c_col = _metadata_true_cols(m)
+                if t_col is not None:
+                    true_tilt = pd.to_numeric(m.iloc[0][t_col], errors="coerce")
+                    row["tilt_true"] = true_tilt
+                if c_col is not None:
+                    true_center = pd.to_numeric(m.iloc[0][c_col], errors="coerce")
+                    row["center_true"] = true_center
+
+        single_df = None
+        if single_grid_path.exists():
+            single_df = pd.read_csv(single_grid_path)
+            best_single_rmse = _best_by(single_df, "rmse")
+            best_single_bic = _best_by(single_df, "bic")
+            if best_single_rmse is not None:
+                row["best_single_rmse"] = pd.to_numeric(best_single_rmse.get("rmse"), errors="coerce")
+                row["best_single_tilt_rmse"] = pd.to_numeric(best_single_rmse.get("tilt_deg"), errors="coerce")
+                row["best_single_az_rmse"] = pd.to_numeric(best_single_rmse.get("azimuth_deg"), errors="coerce")
+            if best_single_bic is not None:
+                row["best_single_bic"] = pd.to_numeric(best_single_bic.get("bic"), errors="coerce")
+        else:
+            print(f"[make-diagnostics] warning: missing {single_grid_path}")
+
+        two_df = None
+        if two_grid_path.exists():
+            two_df = pd.read_csv(two_grid_path)
+            best_two_rmse = _best_by(two_df, "rmse")
+            best_two_bic = _best_by(two_df, "bic")
+            if best_two_rmse is not None:
+                row["best_two_rmse"] = pd.to_numeric(best_two_rmse.get("rmse"), errors="coerce")
+                row["best_two_tilt_rmse"] = pd.to_numeric(best_two_rmse.get("tilt_deg"), errors="coerce")
+                row["best_two_center_rmse"] = pd.to_numeric(best_two_rmse.get("azimuth_center_deg"), errors="coerce")
+            if best_two_bic is not None:
+                row["best_two_bic"] = pd.to_numeric(best_two_bic.get("bic"), errors="coerce")
+        else:
+            print(f"[make-diagnostics] warning: missing {two_grid_path}")
+
+        if pd.notna(row["best_single_rmse"]) and pd.notna(row["best_two_rmse"]):
+            row["delta_rmse"] = float(row["best_two_rmse"] - row["best_single_rmse"])
+            row["rmse_prefers_two_plane"] = bool(row["delta_rmse"] < 0)
+
+        if pd.notna(row["best_single_bic"]) and pd.notna(row["best_two_bic"]):
+            row["delta_bic"] = float(row["best_two_bic"] - row["best_single_bic"])
+            row["bic_prefers_two_plane"] = bool(row["delta_bic"] < 0)
 
         sys_out = per_system_root / system_dir.name
         sys_out.mkdir(parents=True, exist_ok=True)
         _plot_presence_bar({f: (system_dir / f).exists() for f in KEY_FILES}, sys_out / "artifact_presence.png")
         _plot_daily_flags(system_dir / "02_sdt_daily_flags.csv", sys_out / "daily_flags.png")
 
+        if single_df is not None and two_df is not None:
+            _plot_landscape(
+                df=single_df,
+                x_col="azimuth_deg",
+                y_col="tilt_deg",
+                val_col="rmse",
+                out=sys_out / "rmse_single_landscape.png",
+                title="Single-plane RMSE landscape",
+                true_x=_fold_center_0_180(true_center) if true_center is not None else None,
+                true_y=float(true_tilt) if true_tilt is not None and not pd.isna(true_tilt) else None,
+            )
+            _plot_landscape(
+                df=single_df,
+                x_col="azimuth_deg",
+                y_col="tilt_deg",
+                val_col="bic",
+                out=sys_out / "bic_single_landscape.png",
+                title="Single-plane BIC landscape",
+                true_x=_fold_center_0_180(true_center) if true_center is not None else None,
+                true_y=float(true_tilt) if true_tilt is not None and not pd.isna(true_tilt) else None,
+            )
+            _plot_landscape(
+                df=two_df,
+                x_col="azimuth_center_deg",
+                y_col="tilt_deg",
+                val_col="rmse",
+                out=sys_out / "rmse_two_plane_landscape.png",
+                title="Two-plane RMSE landscape",
+                true_x=_fold_center_0_180(true_center) if true_center is not None else None,
+                true_y=float(true_tilt) if true_tilt is not None and not pd.isna(true_tilt) else None,
+            )
+            _plot_landscape(
+                df=two_df,
+                x_col="azimuth_center_deg",
+                y_col="tilt_deg",
+                val_col="bic",
+                out=sys_out / "bic_two_plane_landscape.png",
+                title="Two-plane BIC landscape",
+                true_x=_fold_center_0_180(true_center) if true_center is not None else None,
+                true_y=float(true_tilt) if true_tilt is not None and not pd.isna(true_tilt) else None,
+            )
+        else:
+            print(f"[make-diagnostics] warning: skipping landscape plots for {system_dir.name} (missing one or both full-grid CSVs)")
+
+        rows.append(row)
+
     summary = pd.DataFrame(rows)
 
-    if systems_metadata_csv is not None and not summary.empty:
-        md = pd.read_csv(systems_metadata_csv)
-        if system_id_col in md.columns:
-            md = md.copy()
-            md[system_id_col] = pd.to_numeric(md[system_id_col], errors="coerce").astype("Int64")
-            summary["system_id"] = pd.to_numeric(summary["system_id"], errors="coerce").astype("Int64")
-            summary = summary.merge(md, left_on="system_id", right_on=system_id_col, how="left")
+    if metadata_df is not None and not summary.empty and system_id_col in metadata_df.columns:
+        md = metadata_df.copy()
+        md[system_id_col] = pd.to_numeric(md[system_id_col], errors="coerce").astype("Int64")
+        summary["system_id"] = pd.to_numeric(summary["system_id"], errors="coerce").astype("Int64")
+        summary = summary.merge(md, left_on="system_id", right_on=system_id_col, how="left")
 
     summary.to_csv(diag_root / "aggregated_metrics.csv", index=False)
 
     if not summary.empty:
         _plot_status_counts(summary, global_root / "status_counts.png")
         _plot_hist(summary, "runtime_seconds", global_root / "runtime_hist.png", "Runtime distribution")
-        _plot_hist(summary, "score_rmse", global_root / "rmse_hist.png", "RMSE distribution")
-        _plot_scatter(summary, "tilt_deg", "azimuth_deg", global_root / "tilt_vs_azimuth.png", "Tilt vs azimuth")
+        _plot_hist(summary, "delta_rmse", global_root / "hist_delta_rmse.png", "Delta RMSE (two - single)")
+        _plot_hist(summary, "delta_bic", global_root / "hist_delta_bic.png", "Delta BIC (two - single)")
+
+        dd = summary[["delta_rmse", "delta_bic"]].apply(pd.to_numeric, errors="coerce").dropna()
+        if not dd.empty:
+            fig, ax = plt.subplots()
+            ax.scatter(dd["delta_rmse"], dd["delta_bic"], s=15)
+            ax.axhline(0.0, color="black", linewidth=1)
+            ax.axvline(0.0, color="black", linewidth=1)
+            ax.set_xlabel("delta_rmse")
+            ax.set_ylabel("delta_bic")
+            ax.set_title("Delta RMSE vs Delta BIC")
+            fig.tight_layout()
+            fig.savefig(global_root / "scatter_delta_rmse_vs_delta_bic.png", dpi=150)
+            plt.close(fig)
+
+        center_col = next((c for c in ["center_true", "center_true_x", "center_true_y"] if c in summary.columns), None)
+        tilt_col = next((c for c in ["tilt_true", "tilt_true_x", "tilt_true_y"] if c in summary.columns), None)
+        if center_col is not None and tilt_col is not None and "model_type" in summary.columns:
+            cc = summary.copy()
+            cc["center_folded_0_180"] = cc[center_col].map(_fold_center_0_180)
+            cc = cc.dropna(subset=["center_folded_0_180", tilt_col, "model_type"])
+            if not cc.empty:
+                color = _model_choice_color(cc["model_type"])
+                fig, ax = plt.subplots()
+                sc = ax.scatter(cc["center_folded_0_180"], cc[tilt_col], c=color, cmap="coolwarm", s=20)
+                cbar = fig.colorbar(sc, ax=ax)
+                cbar.set_ticks([-1, 0, 1])
+                cbar.set_ticklabels(["other", "single", "two_plane"])
+                ax.set_xlabel("center_true_folded_0_180")
+                ax.set_ylabel("tilt_true")
+                ax.set_title("Model choice map")
+                fig.tight_layout()
+                fig.savefig(global_root / "model_choice_map.png", dpi=150)
+                plt.close(fig)
 
     return summary
