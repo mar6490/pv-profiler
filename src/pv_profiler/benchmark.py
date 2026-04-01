@@ -100,7 +100,6 @@ def build_benchmark_results(
                 gt_west = gt_west if gt_west is not None else az_b
             gt_az = parse_float_or_none(_pick(row, ["azimuth_deg_true", "azimuth_true", "true_azimuth", "azimuth_deg"]))
 
-        gt_weight = parse_float_or_none(_pick(row, ["weight_true", "weight_east_true", "weight"]))
 
         if not result_path.exists():
             rows.append({"system_id": sid, "system_type": system_type, "status": "no_result"})
@@ -114,7 +113,6 @@ def build_benchmark_results(
         center_est = parse_float_or_none(res.get("azimuth_center_deg"))
         est_east = parse_float_or_none(res.get("azimuth_east_deg"))
         est_west = parse_float_or_none(res.get("azimuth_west_deg"))
-        weight_est = parse_float_or_none(res.get("weight_east"))
 
         tilt_err = abs(tilt_est - gt_tilt) if tilt_est is not None and gt_tilt is not None else np.nan
 
@@ -130,7 +128,6 @@ def build_benchmark_results(
             e2 = circular_err_deg(est_east, gt_west) + circular_err_deg(est_west, gt_east)
             plane_err = float(min(e1, e2) / 2.0)
 
-        weight_err = abs(weight_est - gt_weight) if weight_est is not None and gt_weight is not None else np.nan
 
         rows.append(
             {
@@ -155,11 +152,7 @@ def build_benchmark_results(
                 "azimuth_east_est": est_east,
                 "azimuth_west_est": est_west,
                 "az_plane_abs_err_deg": plane_err,
-                "weight_true": gt_weight,
-                "weight_est": weight_est,
-                "weight_abs_err": weight_err,
                 "score_rmse": parse_float_or_none(res.get("score_rmse")),
-                "score_bic": parse_float_or_none(res.get("score_bic")),
                 "timing_total_s": parse_float_or_none(((res.get("timing_seconds") or {}).get("total"))),
             }
         )

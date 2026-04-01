@@ -38,7 +38,6 @@ def test_run_batch_metadata_join_uses_int_system_id(monkeypatch, tmp_path):
             "tilt_deg": 20.0,
             "azimuth_deg": 180.0,
             "score_rmse": 0.1,
-            "score_bic": -10.0,
         }
         (out_dir / "08_orientation_result.json").write_text(json.dumps(result), encoding="utf-8")
         return result
@@ -83,7 +82,6 @@ def test_run_batch_smoke_and_skip_existing(monkeypatch, tmp_path):
             "tilt_deg": 20.0,
             "azimuth_deg": 180.0,
             "score_rmse": 0.1,
-            "score_bic": -10.0,
         }
         (out_dir / "08_orientation_result.json").write_text(json.dumps(result), encoding="utf-8")
         return result

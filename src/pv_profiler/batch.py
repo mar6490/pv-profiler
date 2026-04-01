@@ -72,7 +72,6 @@ def _run_blocks_for_system(
     latitude: float,
     longitude: float,
     fix_shifts: bool,
-    two_plane_weight_mode: str,
 ) -> dict[str, Any]:
     run_block1_input_loader(
         input_csv=input_csv,
@@ -98,7 +97,6 @@ def _run_blocks_for_system(
         latitude=latitude,
         longitude=longitude,
         timezone=timezone_str,
-        two_plane_weight_mode=two_plane_weight_mode,
     )
     return result
 
@@ -115,7 +113,6 @@ def _process_one(
     lat_lon_map: dict[int, tuple[float, float]],
     skip_existing: bool,
     fix_shifts: bool,
-    two_plane_weight_mode: str,
 ) -> dict[str, Any]:
     system_name = input_csv.stem
     system_id = parse_system_id_from_filename(input_csv)
@@ -156,8 +153,7 @@ def _process_one(
             latitude=lat,
             longitude=lon,
             fix_shifts=fix_shifts,
-            two_plane_weight_mode=two_plane_weight_mode,
-        )
+            )
         status = "ok"
         error = None
     except Exception as exc:
@@ -185,9 +181,7 @@ def _process_one(
         "tilt_deg": fit_result.get("tilt_deg"),
         "azimuth_deg": fit_result.get("azimuth_deg"),
         "azimuth_center_deg": fit_result.get("azimuth_center_deg"),
-        "weight_east": fit_result.get("weight_east"),
         "score_rmse": fit_result.get("score_rmse"),
-        "score_bic": fit_result.get("score_bic"),
     }
     return summary
 
@@ -211,7 +205,6 @@ def run_batch(
     jobs: int = 1,
     skip_existing: bool = False,
     fix_shifts: bool = False,
-    two_plane_weight_mode: str = "fixed_50_50",
 ) -> pd.DataFrame:
     output_root = Path(output_root)
     output_root.mkdir(parents=True, exist_ok=True)
@@ -231,7 +224,6 @@ def run_batch(
             "lat_lon_map": lat_lon_map,
             "skip_existing": skip_existing,
             "fix_shifts": fix_shifts,
-            "two_plane_weight_mode": two_plane_weight_mode,
         }
         for p in inputs
     ]

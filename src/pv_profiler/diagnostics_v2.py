@@ -207,6 +207,12 @@ def _model_choice_color(s: pd.Series) -> np.ndarray:
     return out.astype(float)
 
 
+
+
+def _system_plot_prefix(system_dir_name: str, system_id: int | None) -> str:
+    if system_id is not None:
+        return f"system_{system_id:03d}_"
+    return f"{system_dir_name}_"
 def generate_diagnostics_v2(
     *,
     output_root: str | Path,
@@ -252,9 +258,7 @@ def generate_diagnostics_v2(
             "tilt_deg": orient.get("tilt_deg"),
             "azimuth_deg": orient.get("azimuth_deg"),
             "azimuth_center_deg": orient.get("azimuth_center_deg"),
-            "weight_east": orient.get("weight_east"),
             "score_rmse": orient.get("score_rmse"),
-            "score_bic": orient.get("score_bic"),
             "best_single_rmse": np.nan,
             "best_single_bic": np.nan,
             "best_single_tilt_rmse": np.nan,
@@ -326,13 +330,14 @@ def generate_diagnostics_v2(
 
         sys_out = per_system_root / system_dir.name
         sys_out.mkdir(parents=True, exist_ok=True)
+        plot_prefix = _system_plot_prefix(system_dir.name, system_id)
         if single_df is not None:
             _plot_landscape(
                 df=single_df,
                 x_col="azimuth_deg",
                 y_col="tilt_deg",
                 val_col="rmse",
-                out=sys_out / "rmse_single_landscape.png",
+                out=sys_out / f"{plot_prefix}rmse_single_landscape.png",
                 title="Single-plane RMSE landscape",
                 true_x=float(true_azimuth) if true_azimuth is not None and not pd.isna(true_azimuth) else None,
                 true_y=float(true_tilt) if true_tilt is not None and not pd.isna(true_tilt) else None,
@@ -342,7 +347,7 @@ def generate_diagnostics_v2(
                 x_col="azimuth_deg",
                 y_col="tilt_deg",
                 val_col="bic",
-                out=sys_out / "bic_single_landscape.png",
+                out=sys_out / f"{plot_prefix}bic_single_landscape.png",
                 title="Single-plane BIC landscape",
                 true_x=float(true_azimuth) if true_azimuth is not None and not pd.isna(true_azimuth) else None,
                 true_y=float(true_tilt) if true_tilt is not None and not pd.isna(true_tilt) else None,
@@ -350,7 +355,7 @@ def generate_diagnostics_v2(
             _plot_1d_combo(
                 df=single_df,
                 x_col="azimuth_deg",
-                out=sys_out / "single_1d_azimuth_rmse_bic.png",
+                out=sys_out / f"{plot_prefix}single_1d_azimuth_rmse_bic.png",
                 title="Single-plane min-over-tilt by azimuth",
                 true_x=float(true_azimuth) if true_azimuth is not None and not pd.isna(true_azimuth) else None,
                 x_label="azimuth_deg",
@@ -364,7 +369,7 @@ def generate_diagnostics_v2(
                 x_col="azimuth_center_deg",
                 y_col="tilt_deg",
                 val_col="rmse",
-                out=sys_out / "rmse_two_plane_landscape.png",
+                out=sys_out / f"{plot_prefix}rmse_two_plane_landscape.png",
                 title="Two-plane RMSE landscape",
                 true_x=_fold_center_0_180(true_center) if true_center is not None else None,
                 true_y=float(true_tilt) if true_tilt is not None and not pd.isna(true_tilt) else None,
@@ -374,7 +379,7 @@ def generate_diagnostics_v2(
                 x_col="azimuth_center_deg",
                 y_col="tilt_deg",
                 val_col="bic",
-                out=sys_out / "bic_two_plane_landscape.png",
+                out=sys_out / f"{plot_prefix}bic_two_plane_landscape.png",
                 title="Two-plane BIC landscape",
                 true_x=_fold_center_0_180(true_center) if true_center is not None else None,
                 true_y=float(true_tilt) if true_tilt is not None and not pd.isna(true_tilt) else None,
@@ -382,7 +387,7 @@ def generate_diagnostics_v2(
             _plot_1d_combo(
                 df=two_df,
                 x_col="azimuth_center_deg",
-                out=sys_out / "two_plane_1d_center_rmse_bic.png",
+                out=sys_out / f"{plot_prefix}two_plane_1d_center_rmse_bic.png",
                 title="Two-plane min-over-tilt by center",
                 true_x=_fold_center_0_180(true_center) if true_center is not None else None,
                 x_label="azimuth_center_deg",

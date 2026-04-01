@@ -35,7 +35,6 @@ def _prepare_fixture(tmp_path):
         {
             "tilt_deg": [10, 10, 20, 20],
             "azimuth_center_deg": [80, 100, 80, 100],
-            "weight_mode": ["fixed_50_50"] * 4,
             "weight_opt": [0.5] * 4,
             "rmse": [0.14, 0.17, 0.13, 0.18],
             "bic": [7.0, 10.0, 6.0, 11.0],
@@ -60,7 +59,7 @@ def _prepare_fixture(tmp_path):
     return out, meta
 
 
-def test_generate_diagnostics_v2_core_plots_default_and_health_opt_in(tmp_path):
+def test_generate_diagnostics_v2_core_plots_with_system_prefixed_filenames(tmp_path, capsys):
     out, meta = _prepare_fixture(tmp_path)
 
     df = generate_diagnostics_v2(output_root=out, systems_metadata_csv=meta, system_id_col="system_id")
@@ -84,17 +83,17 @@ def test_generate_diagnostics_v2_core_plots_default_and_health_opt_in(tmp_path):
     assert bool(row1["rmse_prefers_two_plane"])
 
     # core per-system plots (always on)
-    assert (out / "diagnostics_v2" / "per_system" / "system_001" / "rmse_single_landscape.png").exists()
-    assert (out / "diagnostics_v2" / "per_system" / "system_001" / "bic_single_landscape.png").exists()
-    assert (out / "diagnostics_v2" / "per_system" / "system_001" / "rmse_two_plane_landscape.png").exists()
-    assert (out / "diagnostics_v2" / "per_system" / "system_001" / "bic_two_plane_landscape.png").exists()
-    assert (out / "diagnostics_v2" / "per_system" / "system_001" / "single_1d_azimuth_rmse_bic.png").exists()
-    assert (out / "diagnostics_v2" / "per_system" / "system_001" / "two_plane_1d_center_rmse_bic.png").exists()
+    assert (out / "diagnostics_v2" / "per_system" / "system_001" / "system_001_rmse_single_landscape.png").exists()
+    assert (out / "diagnostics_v2" / "per_system" / "system_001" / "system_001_bic_single_landscape.png").exists()
+    assert (out / "diagnostics_v2" / "per_system" / "system_001" / "system_001_rmse_two_plane_landscape.png").exists()
+    assert (out / "diagnostics_v2" / "per_system" / "system_001" / "system_001_bic_two_plane_landscape.png").exists()
+    assert (out / "diagnostics_v2" / "per_system" / "system_001" / "system_001_single_1d_azimuth_rmse_bic.png").exists()
+    assert (out / "diagnostics_v2" / "per_system" / "system_001" / "system_001_two_plane_1d_center_rmse_bic.png").exists()
 
     # missing grids: row kept, plots skipped
     row2 = df[df["system_dir"] == "system_002"].iloc[0]
     assert pd.isna(row2["delta_rmse"])
-    assert not (out / "diagnostics_v2" / "per_system" / "system_002" / "rmse_single_landscape.png").exists()
+    assert not (out / "diagnostics_v2" / "per_system" / "system_002" / "system_002_rmse_single_landscape.png").exists()
 
     # core global plots (always on)
     assert (out / "diagnostics_v2" / "global" / "scatter_delta_rmse_vs_delta_bic.png").exists()
@@ -108,3 +107,11 @@ def test_generate_diagnostics_v2_core_plots_default_and_health_opt_in(tmp_path):
     assert not (out / "diagnostics_v2" / "per_system" / "system_001" / "artifact_presence.png").exists()
     assert not (out / "diagnostics_v2" / "per_system" / "system_001" / "daily_flags.png").exists()
 
+
+    # generic legacy names are not used anymore
+    assert not (out / "diagnostics_v2" / "per_system" / "system_001" / "rmse_single_landscape.png").exists()
+    assert not (out / "diagnostics_v2" / "per_system" / "system_001" / "single_1d_azimuth_rmse_bic.png").exists()
+
+    captured = capsys.readouterr()
+    assert "plots/00_status.json" not in captured.out
+    assert "plots/00_status.json" not in captured.err

@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import pvlib
 
-from pv_profiler.block_orientation_fit import _cyclic_azimuth_candidates, _optimal_weight, _two_plane_azimuths, run_block5_from_files, run_block5_orientation_fit
+from pv_profiler.block_orientation_fit import _cyclic_azimuth_candidates, _two_plane_azimuths, run_block5_from_files, run_block5_orientation_fit
 
 
 def _daily_quantile_normalize(series: pd.Series, q: float = 0.995) -> pd.Series:
@@ -50,8 +50,8 @@ def _make_synthetic_two_plane(latitude: float, longitude: float, tilt: float, ce
     dni_extra = pvlib.irradiance.get_extra_radiation(times)
     airmass = pvlib.atmosphere.get_relative_airmass(sp["apparent_zenith"])
 
-    az_e = center - 45
-    az_w = center + 45
+    az_e = center - 90
+    az_w = center + 90
     poa_e = pvlib.irradiance.get_total_irradiance(
         surface_tilt=tilt,
         surface_azimuth=az_e,
@@ -131,7 +131,7 @@ def test_block5_single_plane_recovery(tmp_path):
     profile = pd.read_csv(out_dir / "10_profile_compare.csv")
     assert {"minute_of_day", "observed_p_norm", "predicted_p_norm"}.issubset(profile.columns)
     single_full = pd.read_csv(out_dir / "09a_orientation_single_full_grid.csv")
-    assert {"tilt_deg", "azimuth_deg", "rmse", "bic"}.issubset(single_full.columns)
+    assert {"tilt_deg", "azimuth_deg", "rmse"}.issubset(single_full.columns)
 
 
 def test_block5_two_plane_selected(tmp_path):
@@ -201,21 +201,6 @@ def test_two_plane_azimuth_half_delta_semantics():
     assert az_w == 270
 
 
-def test_analytic_weight_recovers_true_weight_and_beats_coarse_grid():
-    rng = np.random.default_rng(0)
-    p1 = rng.uniform(0.2, 1.2, 200)
-    p2 = rng.uniform(0.1, 1.0, 200)
-    w_true = 0.35
-    y = w_true * p1 + (1 - w_true) * p2
-
-    w_opt = _optimal_weight(y, p1, p2)
-    assert abs(w_opt - w_true) < 0.05
-
-    rmse_opt = float(np.sqrt(np.mean((y - (w_opt * p1 + (1 - w_opt) * p2)) ** 2)))
-    coarse = [0.0, 0.5, 1.0]
-    rmse_grid = min(float(np.sqrt(np.mean((y - (w * p1 + (1 - w) * p2)) ** 2))) for w in coarse)
-    assert rmse_opt <= rmse_grid + 1e-12
-
 
 def test_two_plane_skip_threshold_sets_flag(tmp_path):
     lat, lon = 52.45544, 13.52481
@@ -238,79 +223,6 @@ def test_two_plane_skip_threshold_sets_flag(tmp_path):
     assert result["two_plane_run"] is False
 
 
-def test_two_plane_fixed_50_50_skips_weight_optimization(monkeypatch):
-    idx = pd.date_range("2020-01-01", periods=48, freq="h")
-    df = pd.DataFrame({"p_norm": np.clip(np.sin(np.linspace(0, 3.14, len(idx))), 0, None)}, index=idx)
-
-    called = {"optimal": False}
-    seen_k: list[int] = []
-
-    def fail_optimal(*args, **kwargs):
-        called["optimal"] = True
-        raise AssertionError("_optimal_weight should not be called in fixed_50_50 mode")
-
-    real_eval = __import__("pv_profiler.block_orientation_fit", fromlist=["_evaluate_candidate_samples"])._evaluate_candidate_samples
-
-    def spy_eval(observed, pred, k):
-        seen_k.append(int(k))
-        return real_eval(observed, pred, k)
-
-    monkeypatch.setattr("pv_profiler.block_orientation_fit._optimal_weight", fail_optimal)
-    monkeypatch.setattr("pv_profiler.block_orientation_fit._evaluate_candidate_samples", spy_eval)
-
-    result, _top, _prof, _single, two_full = run_block5_orientation_fit(
-        df,
-        latitude=52.45544,
-        longitude=13.52481,
-        timezone="Etc/GMT-1",
-        tilt_step=60,
-        az_step=240,
-        two_plane_weight_mode="fixed_50_50",
-    )
-
-    assert called["optimal"] is False
-    assert result["two_plane_weight_mode"] == "fixed_50_50"
-    assert 3 not in seen_k
-    if not two_full.empty:
-        assert set(two_full["weight_opt"]) == {0.5}
-        assert set(two_full["weight_mode"]) == {"fixed_50_50"}
-
-
-def test_two_plane_analytic_optimum_uses_weight_optimization(monkeypatch):
-    idx = pd.date_range("2020-01-01", periods=48, freq="h")
-    df = pd.DataFrame({"p_norm": np.clip(np.sin(np.linspace(0, 3.14, len(idx))), 0, None)}, index=idx)
-
-    calls = {"optimal": 0}
-    seen_k: list[int] = []
-
-    def fake_optimal(*args, **kwargs):
-        calls["optimal"] += 1
-        return 0.3
-
-    real_eval = __import__("pv_profiler.block_orientation_fit", fromlist=["_evaluate_candidate_samples"])._evaluate_candidate_samples
-
-    def spy_eval(observed, pred, k):
-        seen_k.append(int(k))
-        return real_eval(observed, pred, k)
-
-    monkeypatch.setattr("pv_profiler.block_orientation_fit._optimal_weight", fake_optimal)
-    monkeypatch.setattr("pv_profiler.block_orientation_fit._evaluate_candidate_samples", spy_eval)
-
-    result, _top, _prof, _single, two_full = run_block5_orientation_fit(
-        df,
-        latitude=52.45544,
-        longitude=13.52481,
-        timezone="Etc/GMT-1",
-        tilt_step=60,
-        az_step=240,
-        two_plane_weight_mode="analytic_optimum",
-    )
-
-    assert calls["optimal"] > 0
-    assert result["two_plane_weight_mode"] == "analytic_optimum"
-    assert 3 in seen_k
-    if not two_full.empty:
-        assert set(two_full["weight_mode"]) == {"analytic_optimum"}
 
 
 def test_two_plane_mix_then_normalize(monkeypatch):
@@ -327,8 +239,8 @@ def test_two_plane_mix_then_normalize(monkeypatch):
         calls["daily"] += 1
         return poa
 
-    def fake_eval(observed, pred, k):
-        return 0.5, 1.0
+    def fake_eval(observed, pred):
+        return 0.5
 
     monkeypatch.setattr("pv_profiler.block_orientation_fit._poa_single", fake_poa_single)
     monkeypatch.setattr("pv_profiler.block_orientation_fit._daily_normalize", spy_daily_normalize)
@@ -342,7 +254,6 @@ def test_two_plane_mix_then_normalize(monkeypatch):
         timezone="Etc/GMT-1",
         tilt_step=61,
         az_step=180,
-        two_plane_weight_mode="fixed_50_50",
     )
 
     # expected calls with current setup:

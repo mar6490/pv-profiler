@@ -5,10 +5,10 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pvlib
-import matplotlib.pyplot as plt
 
 
 @dataclass
@@ -16,7 +16,6 @@ class OrientationCandidate:
     model_type: str
     params: dict[str, float]
     rmse: float
-    bic: float
 
 
 def _localize_logger_times(index: pd.DatetimeIndex, timezone: str | None) -> tuple[pd.DatetimeIndex, str]:
@@ -24,8 +23,6 @@ def _localize_logger_times(index: pd.DatetimeIndex, timezone: str | None) -> tup
         return index, str(index.tz)
 
     tz_to_use = timezone or "Etc/GMT-1"
-    # Naive logger timestamps are interpreted as continuous local logger time.
-    # Fixed-offset default avoids DST one-hour shifts in forward-model solar geometry.
     return index.tz_localize(tz_to_use), tz_to_use
 
 
@@ -49,13 +46,6 @@ def _daily_normalize(poa: pd.Series, quantile: float, norm_mode: str) -> pd.Seri
 
 def _rmse(y: np.ndarray, yhat: np.ndarray) -> float:
     return float(np.sqrt(np.mean((y - yhat) ** 2)))
-
-
-def _bic(y: np.ndarray, yhat: np.ndarray, k: int) -> float:
-    n = len(y)
-    mse = float(np.mean((y - yhat) ** 2))
-    mse = max(mse, 1e-12)
-    return float(n * np.log(mse) + k * np.log(max(n, 2)))
 
 
 def _minute_of_day(index: pd.DatetimeIndex) -> pd.Index:
@@ -88,33 +78,20 @@ def _poa_single(
     )["poa_global"].clip(lower=0)
 
 
-def _evaluate_candidate_samples(observed: np.ndarray, pred: pd.Series, k: int) -> tuple[float, float]:
+def _evaluate_candidate_samples(observed: np.ndarray, pred: pd.Series) -> float:
     yhat = pred.to_numpy(dtype=float)
     mask = np.isfinite(observed) & np.isfinite(yhat)
     y = observed[mask]
     yh = yhat[mask]
     if len(y) == 0:
-        return float("inf"), float("inf")
-    return _rmse(y, yh), _bic(y, yh, k=k)
+        return float("inf")
+    return _rmse(y, yh)
 
 
 def _two_plane_azimuths(azimuth_center_deg: float, half_delta_az_deg: float) -> tuple[float, float]:
     az_east = (float(azimuth_center_deg) - float(half_delta_az_deg)) % 360
     az_west = (float(azimuth_center_deg) + float(half_delta_az_deg)) % 360
     return az_east, az_west
-
-
-def _optimal_weight(observed: np.ndarray, p1_norm: np.ndarray, p2_norm: np.ndarray) -> float:
-    a = p1_norm - p2_norm
-    b = observed - p2_norm
-    mask = np.isfinite(a) & np.isfinite(b)
-    a = a[mask]
-    b = b[mask]
-    denom = float(np.dot(a, a))
-    if denom <= 0:
-        return 0.5
-    w = float(np.dot(a, b) / denom)
-    return float(np.clip(w, 0.0, 1.0))
 
 
 def run_block5_orientation_fit(
@@ -128,10 +105,8 @@ def run_block5_orientation_fit(
     topk: int = 20,
     quantile: float = 0.995,
     norm_mode: str = "quantile",
-    two_plane_half_delta_az_deg: float = 90.0,
     skip_two_plane: bool = False,
     two_plane_if_rmse_ge: float = 0.0,
-    two_plane_weight_mode: str = "fixed_50_50",
 ) -> tuple[dict, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     t_total0 = time.perf_counter()
 
@@ -140,13 +115,9 @@ def run_block5_orientation_fit(
     if "p_norm" not in p_norm_df.columns:
         raise ValueError("Input p_norm dataframe must contain 'p_norm' column")
 
-    obs = p_norm_df[["p_norm"]].copy().sort_index()
-    obs = obs.dropna(subset=["p_norm"])
+    obs = p_norm_df[["p_norm"]].copy().sort_index().dropna(subset=["p_norm"])
     if obs.empty:
         raise ValueError("Input p_norm contains no usable rows")
-
-    if two_plane_weight_mode not in {"fixed_50_50", "analytic_optimum"}:
-        raise ValueError("two_plane_weight_mode must be one of: fixed_50_50, analytic_optimum")
 
     local_times, tz_used = _localize_logger_times(obs.index, timezone)
     obs_local = pd.Series(obs["p_norm"].to_numpy(dtype=float), index=local_times, name="p_norm")
@@ -160,7 +131,6 @@ def run_block5_orientation_fit(
     t_precompute = time.perf_counter() - t0
 
     records: list[dict] = []
-
     tilts = np.arange(0, 61, tilt_step)
     azimuths = np.arange(0, 360, az_step)
 
@@ -170,17 +140,9 @@ def run_block5_orientation_fit(
         for az in azimuths:
             poa = _poa_single(solar_position, clearsky, tilt=tilt, azimuth=az, dni_extra=dni_extra)
             p_hat = _daily_normalize(poa, quantile=quantile, norm_mode=norm_mode)
-            rmse, bic = _evaluate_candidate_samples(observed_arr, p_hat, k=2)
-            records.append(
-                {
-                    "model_type": "single",
-                    "tilt_deg": float(tilt),
-                    "azimuth_deg": float(az),
-                    "rmse": rmse,
-                    "bic": bic,
-                }
-            )
-            cand = OrientationCandidate("single", {"tilt_deg": float(tilt), "azimuth_deg": float(az)}, rmse, bic)
+            rmse = _evaluate_candidate_samples(observed_arr, p_hat)
+            records.append({"model_type": "single", "tilt_deg": float(tilt), "azimuth_deg": float(az), "rmse": rmse})
+            cand = OrientationCandidate("single", {"tilt_deg": float(tilt), "azimuth_deg": float(az)}, rmse)
             if best_single is None or cand.rmse < best_single.rmse:
                 best_single = cand
     t_coarse_single = time.perf_counter() - t0
@@ -194,64 +156,38 @@ def run_block5_orientation_fit(
         for az in _cyclic_azimuth_candidates(a0s, half_window_deg=5):
             poa = _poa_single(solar_position, clearsky, tilt=tilt, azimuth=az, dni_extra=dni_extra)
             p_hat = _daily_normalize(poa, quantile=quantile, norm_mode=norm_mode)
-            rmse, bic = _evaluate_candidate_samples(observed_arr, p_hat, k=2)
-            records.append(
-                {
-                    "model_type": "single",
-                    "tilt_deg": float(tilt),
-                    "azimuth_deg": float(az),
-                    "rmse": rmse,
-                    "bic": bic,
-                }
-            )
-            cand = OrientationCandidate("single", {"tilt_deg": float(tilt), "azimuth_deg": float(az)}, rmse, bic)
+            rmse = _evaluate_candidate_samples(observed_arr, p_hat)
+            records.append({"model_type": "single", "tilt_deg": float(tilt), "azimuth_deg": float(az), "rmse": rmse})
+            cand = OrientationCandidate("single", {"tilt_deg": float(tilt), "azimuth_deg": float(az)}, rmse)
             if cand.rmse < best_single.rmse:
                 best_single = cand
     t_fine_single = time.perf_counter() - t0
 
-    run_two_plane = (not skip_two_plane) and (
-        two_plane_if_rmse_ge <= 0 or best_single.rmse >= float(two_plane_if_rmse_ge)
-    )
+    run_two_plane = (not skip_two_plane) and (two_plane_if_rmse_ge <= 0 or best_single.rmse >= float(two_plane_if_rmse_ge))
 
     t0 = time.perf_counter()
     best_two: OrientationCandidate | None = None
     if run_two_plane:
         centers = np.arange(0, 180, az_step)
+        half_delta_az = 90.0
+        w = 0.5
         for tilt in tilts:
             for center in centers:
-                az_e, az_w = _two_plane_azimuths(center, two_plane_half_delta_az_deg)
+                az_e, az_w = _two_plane_azimuths(center, half_delta_az)
                 poa_e = _poa_single(solar_position, clearsky, tilt=tilt, azimuth=az_e, dni_extra=dni_extra)
                 poa_w = _poa_single(solar_position, clearsky, tilt=tilt, azimuth=az_w, dni_extra=dni_extra)
-
-                if two_plane_weight_mode == "analytic_optimum":
-                    p1_norm_for_weight = _daily_normalize(poa_e, quantile=quantile, norm_mode=norm_mode)
-                    p2_norm_for_weight = _daily_normalize(poa_w, quantile=quantile, norm_mode=norm_mode)
-                    w_opt = _optimal_weight(
-                        observed_arr,
-                        p1_norm_for_weight.to_numpy(dtype=float),
-                        p2_norm_for_weight.to_numpy(dtype=float),
-                    )
-                    k_two = 3
-                else:
-                    w_opt = 0.5
-                    k_two = 2
-
-                p_mix_raw = w_opt * poa_e + (1 - w_opt) * poa_w
+                p_mix_raw = w * poa_e + (1 - w) * poa_w
                 p_mix = _daily_normalize(p_mix_raw, quantile=quantile, norm_mode=norm_mode)
 
-                rmse, bic = _evaluate_candidate_samples(observed_arr, p_mix, k=k_two)
+                rmse = _evaluate_candidate_samples(observed_arr, p_mix)
                 records.append(
                     {
                         "model_type": "two_plane",
                         "tilt_deg": float(tilt),
                         "azimuth_center_deg": float(center),
-                        "two_plane_half_delta_az_deg": float(two_plane_half_delta_az_deg),
                         "azimuth_east_deg": az_e,
                         "azimuth_west_deg": az_w,
-                        "weight_opt": float(w_opt),
-                        "weight_mode": two_plane_weight_mode,
                         "rmse": rmse,
-                        "bic": bic,
                     }
                 )
                 cand = OrientationCandidate(
@@ -259,26 +195,17 @@ def run_block5_orientation_fit(
                     {
                         "tilt_deg": float(tilt),
                         "azimuth_center_deg": float(center),
-                        "two_plane_half_delta_az_deg": float(two_plane_half_delta_az_deg),
                         "azimuth_east_deg": az_e,
                         "azimuth_west_deg": az_w,
-                        "weight_opt": float(w_opt),
-                        "weight_mode": two_plane_weight_mode,
                     },
                     rmse,
-                    bic,
                 )
                 if best_two is None or cand.rmse < best_two.rmse:
                     best_two = cand
     t_coarse_two_plane = time.perf_counter() - t0
 
-    # Model selection based solely on Bayesian Information Criterion (BIC).
-    # Lower BIC indicates preferred model after penalizing model complexity.
-    choose_two = (
-        run_two_plane
-        and best_two is not None
-        and best_two.bic < best_single.bic
-    )
+    # Model selection based on RMSE.
+    choose_two = run_two_plane and best_two is not None and best_two.rmse < best_single.rmse
     winner = best_two if choose_two else best_single
 
     timing = {
@@ -293,19 +220,14 @@ def run_block5_orientation_fit(
         "model_type": winner.model_type,
         "tilt_deg": winner.params["tilt_deg"],
         "score_rmse": winner.rmse,
-        "score_bic": winner.bic,
         "rmse_single": best_single.rmse,
-        "bic_single": best_single.bic,
         "two_plane_run": bool(run_two_plane),
-        "two_plane_weight_mode": two_plane_weight_mode,
         "n_points": int(len(observed_arr)),
         "grid_spec": {
             "tilt_range": [0, 60],
             "tilt_step": int(tilt_step),
             "azimuth_range": [0, 179],
             "azimuth_step": int(az_step),
-            "two_plane_half_delta_az_deg": float(two_plane_half_delta_az_deg),
-            "two_plane_weight_mode": two_plane_weight_mode,
         },
         "norm_mode": norm_mode,
         "quantile": quantile,
@@ -318,15 +240,12 @@ def run_block5_orientation_fit(
         result.update(
             {
                 "azimuth_center_deg": winner.params["azimuth_center_deg"],
-                "two_plane_half_delta_az_deg": winner.params["two_plane_half_delta_az_deg"],
                 "azimuth_east_deg": winner.params["azimuth_east_deg"],
                 "azimuth_west_deg": winner.params["azimuth_west_deg"],
-                "weight_east": winner.params["weight_opt"],
-                "weight_mode": winner.params["weight_mode"],
             }
         )
 
-    top = pd.DataFrame(records).sort_values(["rmse", "bic"]).head(topk).reset_index(drop=True)
+    top = pd.DataFrame(records).sort_values(["rmse"]).head(topk).reset_index(drop=True)
 
     obs_prof = obs_local.groupby(_minute_of_day(obs_local.index)).median().rename("observed_p_norm")
     if winner.model_type == "single":
@@ -337,6 +256,7 @@ def run_block5_orientation_fit(
             azimuth=winner.params["azimuth_deg"],
             dni_extra=dni_extra,
         )
+        pred = _daily_normalize(poa, quantile=quantile, norm_mode=norm_mode)
     else:
         poa_e = _poa_single(
             solar_position,
@@ -352,30 +272,29 @@ def run_block5_orientation_fit(
             azimuth=winner.params["azimuth_west_deg"],
             dni_extra=dni_extra,
         )
-        p_mix_raw = winner.params["weight_opt"] * poa_e + (1 - winner.params["weight_opt"]) * poa_w
+        p_mix_raw = 0.5 * poa_e + 0.5 * poa_w
         pred = _daily_normalize(p_mix_raw, quantile=quantile, norm_mode=norm_mode)
-    if winner.model_type == "single":
-        pred = _daily_normalize(poa, quantile=quantile, norm_mode=norm_mode)
+
     pred_prof = pred.groupby(_minute_of_day(pred.index)).median().rename("predicted_p_norm")
     minutes = pd.Index(np.arange(0, 24 * 60, 5), name="minute_of_day")
     profile_compare = pd.concat([obs_prof, pred_prof], axis=1).reindex(minutes).reset_index()
 
     all_records = pd.DataFrame(records)
     single_full = (
-        all_records.loc[all_records["model_type"] == "single", ["tilt_deg", "azimuth_deg", "rmse", "bic"]]
+        all_records.loc[all_records["model_type"] == "single", ["tilt_deg", "azimuth_deg", "rmse"]]
         .drop_duplicates(subset=["tilt_deg", "azimuth_deg"], keep="first")
         .sort_values(["tilt_deg", "azimuth_deg"])
         .reset_index(drop=True)
     )
-    two_plane_cols = ["tilt_deg", "azimuth_center_deg", "weight_mode", "weight_opt", "rmse", "bic"]
+    two_plane_cols = ["tilt_deg", "azimuth_center_deg", "rmse"]
     two_plane_subset = all_records.loc[all_records["model_type"] == "two_plane"]
     if two_plane_subset.empty:
         two_plane_full = pd.DataFrame(columns=two_plane_cols)
     else:
         two_plane_full = (
             two_plane_subset[two_plane_cols]
-            .drop_duplicates(subset=["tilt_deg", "azimuth_center_deg", "weight_mode", "weight_opt"], keep="first")
-            .sort_values(["tilt_deg", "azimuth_center_deg", "weight_mode", "weight_opt"])
+            .drop_duplicates(subset=["tilt_deg", "azimuth_center_deg"], keep="first")
+            .sort_values(["tilt_deg", "azimuth_center_deg"])
             .reset_index(drop=True)
         )
 
@@ -394,10 +313,8 @@ def run_block5_from_files(
     topk: int = 20,
     quantile: float = 0.995,
     norm_mode: str = "quantile",
-    two_plane_delta_az_deg: float = 90.0,
     skip_two_plane: bool = False,
     two_plane_if_rmse_ge: float = 0.0,
-    two_plane_weight_mode: str = "fixed_50_50",
 ) -> dict:
     df = pd.read_parquet(input_p_norm_parquet)
     result, topk_df, profile_compare, single_full, two_plane_full = run_block5_orientation_fit(
@@ -410,10 +327,8 @@ def run_block5_from_files(
         topk=topk,
         quantile=quantile,
         norm_mode=norm_mode,
-        two_plane_half_delta_az_deg=two_plane_delta_az_deg,
         skip_two_plane=skip_two_plane,
         two_plane_if_rmse_ge=two_plane_if_rmse_ge,
-        two_plane_weight_mode=two_plane_weight_mode,
     )
 
     out = Path(output_dir)

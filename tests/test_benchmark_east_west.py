@@ -24,9 +24,7 @@ def test_build_benchmark_results_handles_east_west_azimuth_string(tmp_path):
         "azimuth_center_deg": 180.0,
         "azimuth_east_deg": 90.0,
         "azimuth_west_deg": 270.0,
-        "weight_east": 0.4,
         "score_rmse": 0.1,
-        "score_bic": -2.0,
         "timing_seconds": {"total": 1.2},
     }
     (sys_dir / "08_orientation_result.json").write_text(json.dumps(result), encoding="utf-8")
@@ -39,7 +37,6 @@ def test_build_benchmark_results_handles_east_west_azimuth_string(tmp_path):
                 "tilt": 25.0,
                 "azimuth": "270.000000/90.000000",
                 "azimuth_center_deg_true": 180.0,
-                "weight_true": 0.5,
             }
         ]
     )
@@ -53,7 +50,6 @@ def test_build_benchmark_results_handles_east_west_azimuth_string(tmp_path):
     assert row["status"] == "ok"
     assert pd.notna(row["az_center_abs_err_deg"])
     assert pd.notna(row["az_plane_abs_err_deg"])
-    assert pd.notna(row["weight_abs_err"])
 
 
 def test_plane_matching_uses_min_assignment(tmp_path):
@@ -68,7 +64,6 @@ def test_plane_matching_uses_min_assignment(tmp_path):
         "azimuth_center_deg": 180.0,
         "azimuth_east_deg": 270.0,
         "azimuth_west_deg": 90.0,
-        "weight_east": 0.5,
     }
     (sys_dir / "08_orientation_result.json").write_text(json.dumps(result), encoding="utf-8")
 

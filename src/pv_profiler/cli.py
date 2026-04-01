@@ -135,12 +135,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Daily model normalization mode",
     )
     block5_parser.add_argument(
-        "--two-plane-delta-az-deg",
-        type=float,
-        default=90.0,
-        help="Two-plane half-delta in azimuth degrees (east=center-delta, west=center+delta)",
-    )
-    block5_parser.add_argument(
         "--skip-two-plane",
         action="store_true",
         help="Skip two-plane fitting and keep single-plane result",
@@ -149,13 +143,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--two-plane-if-rmse-ge",
         type=float,
         default=0.0,
-        help="Run two-plane only if best single-plane RMSE is >= threshold (0.0 means always run)",
-    )
-    block5_parser.add_argument(
-        "--two-plane-weight-mode",
-        choices=["fixed_50_50", "analytic_optimum"],
-        default="fixed_50_50",
-        help="Two-plane weight mode (default: fixed 50/50, optional analytic optimum)",
+        help="Run two-plane only if best single-plane RMSE is >= threshold (0.0 means always run); two-plane uses fixed ±90° and 50/50 mix",
     )
 
     batch_parser = sub.add_parser("run-batch", help="Run Blocks 1-5 for many CSV systems")
@@ -172,11 +160,6 @@ def build_parser() -> argparse.ArgumentParser:
     batch_parser.add_argument("--jobs", type=int, default=1)
     batch_parser.add_argument("--skip-existing", action="store_true")
     batch_parser.add_argument("--fix-shifts", action="store_true")
-    batch_parser.add_argument(
-        "--two-plane-weight-mode",
-        choices=["fixed_50_50", "analytic_optimum"],
-        default="fixed_50_50",
-    )
 
     diagnostics_parser = sub.add_parser(
         "make-diagnostics",
@@ -327,10 +310,8 @@ def main() -> int:
             topk=args.topk,
             quantile=args.quantile,
             norm_mode=args.norm_mode,
-            two_plane_delta_az_deg=args.two_plane_delta_az_deg,
             skip_two_plane=args.skip_two_plane,
             two_plane_if_rmse_ge=args.two_plane_if_rmse_ge,
-            two_plane_weight_mode=args.two_plane_weight_mode,
         )
         print(json.dumps(result, indent=2))
         t = result.get("timing_seconds", {})
@@ -358,7 +339,6 @@ def main() -> int:
             jobs=args.jobs,
             skip_existing=args.skip_existing,
             fix_shifts=args.fix_shifts,
-            two_plane_weight_mode=args.two_plane_weight_mode,
         )
         print(summary[[c for c in ["system_id", "status", "runtime_seconds"] if c in summary.columns]].to_string(index=False))
         return 0

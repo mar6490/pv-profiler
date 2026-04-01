@@ -123,8 +123,7 @@ pv-ident run-batch \
   --timestamp-col time \
   --power-col ac_power_w \
   --timezone Etc/GMT-1 \
-  --jobs 4 \
-  --two-plane-weight-mode fixed_50_50
+  --jobs 4
 ```
 
 ### 3) Einzelne Blöcke separat
@@ -178,11 +177,10 @@ pv-ident run-block5 \
   --output-dir outputs/sonnja_wr1_block5 \
   --latitude 52.45544 \
   --longitude 13.52481 \
-  --timezone Etc/GMT-1 \
-  --two-plane-weight-mode fixed_50_50
+  --timezone Etc/GMT-1
 ```
 
-Standard: Two-Plane nutzt `fixed_50_50` (50/50) ohne LS-Gewichtsschätzung. Optional kann LS aktiviert werden mit `--two-plane-weight-mode analytic_optimum`.
+Two-Plane nutzt fest 180° Spreizung (East/West = center ±90°) und feste 50/50-Gewichtung; die Modellauswahl Single vs. Two-Plane erfolgt über RMSE.
 
 ### 4) `make-diagnostics`
 
@@ -200,7 +198,7 @@ Output unter `outputs/batch/diagnostics_v2/`:
 
 - `aggregated_metrics.csv`
 - `global/*.png` (Model-Selection: `hist_delta_rmse`, `hist_delta_bic`, `scatter_delta_rmse_vs_delta_bic`, optional `model_choice_map`)
-- `per_system/system_XXX/*.png` (Model-Selection-Landschaften und 1D-RMSE/BIC-Kurven)
+- `per_system/system_XXX/system_XXX_*.png` (Model-Selection-Landschaften und 1D-RMSE-Kurven mit Systempräfix)
 
 Hinweis: Two-Plane normalisiert jetzt das gemischte Profil (East/West zuerst mischen, dann pro Tag normalisieren), nicht mehr jede Seite separat.
 
