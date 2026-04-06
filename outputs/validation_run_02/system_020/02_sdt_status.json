@@ -1,0 +1,20 @@
+{
+  "status": "success",
+  "solver": "CLARABEL",
+  "fix_shifts": false,
+  "report": {
+    "length": 1.0,
+    "capacity": 5.349795833975814,
+    "sampling": 5,
+    "quality score": 0.9972602739726028,
+    "clearness score": 0.2493150684931507,
+    "inverter clipping": false,
+    "clipped fraction": 0.0,
+    "capacity change": true,
+    "data quality warning": "True",
+    "time shift correction": false,
+    "time zone correction": 0
+  },
+  "error": null,
+  "message": null
+}

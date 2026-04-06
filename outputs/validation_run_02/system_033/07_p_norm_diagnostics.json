@@ -1,0 +1,17 @@
+{
+  "n_days_total": 365,
+  "n_fit_days": 88,
+  "n_usable_days": 88,
+  "quantile_used": 0.995,
+  "n_samples_fit_total": 25344,
+  "n_samples_norm_total": 25344,
+  "share_p_norm_gt_1": 0.006944444444444444,
+  "share_p_norm_gt_1_2": 0.0,
+  "min_p_peak_day": 2678.2188564964945,
+  "max_p_peak_day": 6720.3426956521425,
+  "decisions": [
+    "peak computed from fit samples only (power non-null)",
+    "days with peak<=0 excluded",
+    "dropna_output=True"
+  ]
+}

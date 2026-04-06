@@ -1,0 +1,9 @@
+{
+  "status": "ok",
+  "n_fit_days": 69,
+  "min_required_fit_days": 10,
+  "rule_used": "(clear == True) AND (inverter_clipped == False) AND (no_errors == True)",
+  "n_days_total": 365,
+  "n_unmatched_days": 0,
+  "fit_mode": "mask_to_nan"
+}

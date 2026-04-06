@@ -1,0 +1,35 @@
+{
+  "model_type": "single",
+  "tilt_deg": 34.0,
+  "score_rmse": 0.055252928764731854,
+  "rmse_single": 0.055252928764731854,
+  "two_plane_run": true,
+  "n_points": 21600,
+  "grid_spec": {
+    "tilt_range": [
+      0,
+      60
+    ],
+    "tilt_step": 5,
+    "azimuth_range": [
+      0,
+      179
+    ],
+    "azimuth_step": 10
+  },
+  "norm_mode": "quantile",
+  "quantile": 0.995,
+  "timezone_used": "Etc/GMT-1",
+  "timing_seconds": {
+    "precompute": 0.23102060001110658,
+    "coarse_single": 95.54640059999656,
+    "fine_single": 24.649886100029107,
+    "coarse_two_plane": 50.81024449999677,
+    "fine_two_plane": 14.384998900000937,
+    "total": 185.79656779998913
+  },
+  "confidence_tilt_range_deg": 10.0,
+  "confidence_warning": null,
+  "azimuth_deg": 223.0,
+  "confidence_azimuth_range_deg": 10.0
+}

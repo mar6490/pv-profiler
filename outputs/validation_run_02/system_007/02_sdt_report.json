@@ -1,0 +1,13 @@
+{
+  "length": 1.0,
+  "capacity": 6.218057391978565,
+  "sampling": 5,
+  "quality score": 0.9945205479452055,
+  "clearness score": 0.2219178082191781,
+  "inverter clipping": false,
+  "clipped fraction": 0.005479452054794521,
+  "capacity change": true,
+  "data quality warning": "True",
+  "time shift correction": false,
+  "time zone correction": 0
+}

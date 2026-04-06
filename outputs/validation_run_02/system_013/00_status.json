@@ -1,0 +1,9 @@
+{
+  "system_id": 13,
+  "input_csv": "C:\\Users\\Maren.Murjahn\\PycharmProjects\\pv-profiler\\data\\Validation_dataset\\system_013.csv",
+  "status": "ok",
+  "error": null,
+  "started_at": "2026-04-06T16:14:43.134568+00:00",
+  "finished_at": "2026-04-06T16:18:31.847456+00:00",
+  "runtime_seconds": 228.71538150002016
+}

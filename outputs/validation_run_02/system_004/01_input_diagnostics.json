@@ -1,0 +1,30 @@
+{
+  "shape": [
+    105120,
+    1
+  ],
+  "columns": [
+    "power"
+  ],
+  "min_time": "2025-01-01T00:00:00",
+  "max_time": "2025-12-31T23:55:00",
+  "dominant_timedelta": "0 days 00:05:00",
+  "sampling_summary": {
+    "0 days 00:05:00": 105119
+  },
+  "share_positive_power": 0.476617199391172,
+  "share_nan_power": 0.0,
+  "share_non_null_power": 1.0,
+  "index_monotonic_increasing": true,
+  "min_power": 0.0,
+  "max_power": 8695.652173913044,
+  "decisions": [
+    "csv_options: sep=',', encoding='utf-8', decimal='.', quotechar='\"'",
+    "selected_columns: [time, ac_power_w]",
+    "output_column_standardized_to: power",
+    "tz_localized_to: Etc/GMT-1",
+    "tz_removed_for_sdt: true (using naive local-time index)",
+    "negatives_clipped: False (count=0)",
+    "power_nans_kept: true (left for downstream SDT handling)"
+  ]
+}

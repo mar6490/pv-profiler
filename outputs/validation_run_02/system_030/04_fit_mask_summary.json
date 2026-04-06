@@ -1,0 +1,10 @@
+{
+  "n_days_total": 365,
+  "n_fit_days": 87,
+  "share_fit_days": 0.23835616438356164,
+  "n_samples_total": 105120,
+  "n_samples_fit": 25056,
+  "n_unmatched_days": 0,
+  "fit_mode": "mask_to_nan",
+  "rule_used": "(clear == True) AND (inverter_clipped == False) AND (no_errors == True)"
+}
