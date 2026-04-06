@@ -94,6 +94,44 @@ def _two_plane_azimuths(azimuth_center_deg: float, half_delta_az_deg: float) -> 
     return az_east, az_west
 
 
+def _circular_span_deg(values: pd.Series) -> float:
+    vals = pd.to_numeric(values, errors="coerce").dropna().to_numpy(dtype=float)
+    if vals.size == 0:
+        return float("nan")
+    vals = np.mod(vals, 360.0)
+    vals = np.unique(np.sort(vals))
+    if vals.size <= 1:
+        return 0.0
+    diffs = np.diff(np.r_[vals, vals[0] + 360.0])
+    largest_gap = float(np.max(diffs))
+    return float(360.0 - largest_gap)
+
+
+def _confidence_from_fine_grid(df: pd.DataFrame, *, az_col: str) -> tuple[float, float, str | None]:
+    if df.empty or "rmse" not in df.columns:
+        return float("nan"), float("nan"), None
+    d = df.copy()
+    d["rmse"] = pd.to_numeric(d["rmse"], errors="coerce")
+    d = d.dropna(subset=["rmse", "tilt_deg", az_col])
+    if d.empty:
+        return float("nan"), float("nan"), None
+
+    rmse_min = float(d["rmse"].min())
+    threshold = rmse_min * 1.05
+    keep = d[d["rmse"] <= threshold]
+    if keep.empty:
+        return float("nan"), float("nan"), None
+
+    tilt_span = float(pd.to_numeric(keep["tilt_deg"], errors="coerce").max() - pd.to_numeric(keep["tilt_deg"], errors="coerce").min())
+    az_span = _circular_span_deg(keep[az_col])
+
+    warning = None
+    if (np.isfinite(tilt_span) and tilt_span > 15.0) or (np.isfinite(az_span) and az_span > 15.0):
+        warning = "Wide RMSE confidence region (>15°) around optimum; orientation may be weakly identifiable."
+
+    return tilt_span, az_span, warning
+
+
 def run_block5_orientation_fit(
     p_norm_df: pd.DataFrame,
     *,
@@ -131,6 +169,9 @@ def run_block5_orientation_fit(
     t_precompute = time.perf_counter() - t0
 
     records: list[dict] = []
+    single_fine_records: list[dict] = []
+    two_fine_records: list[dict] = []
+
     tilts = np.arange(0, 61, tilt_step)
     azimuths = np.arange(0, 360, az_step)
 
@@ -141,7 +182,8 @@ def run_block5_orientation_fit(
             poa = _poa_single(solar_position, clearsky, tilt=tilt, azimuth=az, dni_extra=dni_extra)
             p_hat = _daily_normalize(poa, quantile=quantile, norm_mode=norm_mode)
             rmse = _evaluate_candidate_samples(observed_arr, p_hat)
-            records.append({"model_type": "single", "tilt_deg": float(tilt), "azimuth_deg": float(az), "rmse": rmse})
+            rec = {"model_type": "single", "tilt_deg": float(tilt), "azimuth_deg": float(az), "rmse": rmse}
+            records.append(rec)
             cand = OrientationCandidate("single", {"tilt_deg": float(tilt), "azimuth_deg": float(az)}, rmse)
             if best_single is None or cand.rmse < best_single.rmse:
                 best_single = cand
@@ -157,7 +199,9 @@ def run_block5_orientation_fit(
             poa = _poa_single(solar_position, clearsky, tilt=tilt, azimuth=az, dni_extra=dni_extra)
             p_hat = _daily_normalize(poa, quantile=quantile, norm_mode=norm_mode)
             rmse = _evaluate_candidate_samples(observed_arr, p_hat)
-            records.append({"model_type": "single", "tilt_deg": float(tilt), "azimuth_deg": float(az), "rmse": rmse})
+            rec = {"model_type": "single", "tilt_deg": float(tilt), "azimuth_deg": float(az), "rmse": rmse}
+            records.append(rec)
+            single_fine_records.append(rec)
             cand = OrientationCandidate("single", {"tilt_deg": float(tilt), "azimuth_deg": float(az)}, rmse)
             if cand.rmse < best_single.rmse:
                 best_single = cand
@@ -180,16 +224,15 @@ def run_block5_orientation_fit(
                 p_mix = _daily_normalize(p_mix_raw, quantile=quantile, norm_mode=norm_mode)
 
                 rmse = _evaluate_candidate_samples(observed_arr, p_mix)
-                records.append(
-                    {
-                        "model_type": "two_plane",
-                        "tilt_deg": float(tilt),
-                        "azimuth_center_deg": float(center),
-                        "azimuth_east_deg": az_e,
-                        "azimuth_west_deg": az_w,
-                        "rmse": rmse,
-                    }
-                )
+                rec = {
+                    "model_type": "two_plane",
+                    "tilt_deg": float(tilt),
+                    "azimuth_center_deg": float(center),
+                    "azimuth_east_deg": az_e,
+                    "azimuth_west_deg": az_w,
+                    "rmse": rmse,
+                }
+                records.append(rec)
                 cand = OrientationCandidate(
                     "two_plane",
                     {
@@ -204,6 +247,44 @@ def run_block5_orientation_fit(
                     best_two = cand
     t_coarse_two_plane = time.perf_counter() - t0
 
+    t0 = time.perf_counter()
+    if run_two_plane and best_two is not None:
+        half_delta_az = 90.0
+        w = 0.5
+        t0t = int(round(best_two.params["tilt_deg"]))
+        c0 = int(round(best_two.params["azimuth_center_deg"]))
+        for tilt in np.arange(max(0, t0t - 5), min(60, t0t + 5) + 1, 1):
+            for center in _cyclic_azimuth_candidates(c0, half_window_deg=5):
+                az_e, az_w = _two_plane_azimuths(center, half_delta_az)
+                poa_e = _poa_single(solar_position, clearsky, tilt=tilt, azimuth=az_e, dni_extra=dni_extra)
+                poa_w = _poa_single(solar_position, clearsky, tilt=tilt, azimuth=az_w, dni_extra=dni_extra)
+                p_mix_raw = w * poa_e + (1 - w) * poa_w
+                p_mix = _daily_normalize(p_mix_raw, quantile=quantile, norm_mode=norm_mode)
+                rmse = _evaluate_candidate_samples(observed_arr, p_mix)
+                rec = {
+                    "model_type": "two_plane",
+                    "tilt_deg": float(tilt),
+                    "azimuth_center_deg": float(center),
+                    "azimuth_east_deg": az_e,
+                    "azimuth_west_deg": az_w,
+                    "rmse": rmse,
+                }
+                records.append(rec)
+                two_fine_records.append(rec)
+                cand = OrientationCandidate(
+                    "two_plane",
+                    {
+                        "tilt_deg": float(tilt),
+                        "azimuth_center_deg": float(center),
+                        "azimuth_east_deg": az_e,
+                        "azimuth_west_deg": az_w,
+                    },
+                    rmse,
+                )
+                if cand.rmse < best_two.rmse:
+                    best_two = cand
+    t_fine_two_plane = time.perf_counter() - t0
+
     # Model selection based on RMSE.
     choose_two = run_two_plane and best_two is not None and best_two.rmse < best_single.rmse
     winner = best_two if choose_two else best_single
@@ -213,6 +294,7 @@ def run_block5_orientation_fit(
         "coarse_single": t_coarse_single,
         "fine_single": t_fine_single,
         "coarse_two_plane": t_coarse_two_plane,
+        "fine_two_plane": t_fine_two_plane,
         "total": time.perf_counter() - t_total0,
     }
 
@@ -233,9 +315,15 @@ def run_block5_orientation_fit(
         "quantile": quantile,
         "timezone_used": tz_used,
         "timing_seconds": timing,
+        "confidence_tilt_range_deg": float("nan"),
+        "confidence_warning": None,
     }
     if winner.model_type == "single":
         result["azimuth_deg"] = winner.params["azimuth_deg"]
+        conf_tilt, conf_az, conf_warn = _confidence_from_fine_grid(pd.DataFrame(single_fine_records), az_col="azimuth_deg")
+        result["confidence_tilt_range_deg"] = conf_tilt
+        result["confidence_azimuth_range_deg"] = conf_az
+        result["confidence_warning"] = conf_warn
     else:
         result.update(
             {
@@ -244,6 +332,12 @@ def run_block5_orientation_fit(
                 "azimuth_west_deg": winner.params["azimuth_west_deg"],
             }
         )
+        conf_tilt, conf_center, conf_warn = _confidence_from_fine_grid(
+            pd.DataFrame(two_fine_records), az_col="azimuth_center_deg"
+        )
+        result["confidence_tilt_range_deg"] = conf_tilt
+        result["confidence_azimuth_center_range_deg"] = conf_center
+        result["confidence_warning"] = conf_warn
 
     top = pd.DataFrame(records).sort_values(["rmse"]).head(topk).reset_index(drop=True)
 

@@ -182,6 +182,10 @@ def _process_one(
         "azimuth_deg": fit_result.get("azimuth_deg"),
         "azimuth_center_deg": fit_result.get("azimuth_center_deg"),
         "score_rmse": fit_result.get("score_rmse"),
+        "confidence_tilt_range_deg": fit_result.get("confidence_tilt_range_deg"),
+        "confidence_azimuth_range_deg": fit_result.get("confidence_azimuth_range_deg"),
+        "confidence_azimuth_center_range_deg": fit_result.get("confidence_azimuth_center_range_deg"),
+        "confidence_warning": fit_result.get("confidence_warning"),
     }
     return summary
 

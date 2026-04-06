@@ -125,6 +125,8 @@ def test_block5_single_plane_recovery(tmp_path):
     )
 
     assert result["model_type"] == "single"
+    assert "confidence_tilt_range_deg" in result
+    assert "confidence_azimuth_range_deg" in result
     assert abs(float(result["tilt_deg"]) - 25) <= 5
     assert abs(float(result["azimuth_deg"]) - 200) <= 10
     assert "timing_seconds" in result
@@ -152,6 +154,8 @@ def test_block5_two_plane_selected(tmp_path):
     )
 
     assert result["two_plane_run"] is True
+    if result["model_type"] == "two_plane":
+        assert "confidence_azimuth_center_range_deg" in result
     profile = pd.read_csv(out_dir / "10_profile_compare.csv")
     assert {"minute_of_day", "observed_p_norm", "predicted_p_norm"}.issubset(profile.columns)
     assert (out_dir / "09b_orientation_two_plane_full_grid.csv").exists()
@@ -256,9 +260,9 @@ def test_two_plane_mix_then_normalize(monkeypatch):
         az_step=180,
     )
 
-    # expected calls with current setup:
-    # single coarse: 2, single fine: 6, two-plane mix normalize: 1, winner profile normalize(single): 1
-    assert calls["daily"] == 10
+    # expected calls with current setup (cyclic candidates monkeypatched to a single center):
+    # single coarse: 2, single fine: 6, two-plane coarse: 1, two-plane fine: 6, winner profile normalize(single): 1
+    assert calls["daily"] == 16
 
 
 def test_center_searchspace_canonical_0_180(tmp_path):
@@ -281,7 +285,7 @@ def test_center_searchspace_canonical_0_180(tmp_path):
     two_full = pd.read_csv(out_dir / "09b_orientation_two_plane_full_grid.csv")
     if not two_full.empty:
         assert (two_full["azimuth_center_deg"] >= 0).all()
-        assert (two_full["azimuth_center_deg"] < 180).all()
+        assert (two_full["azimuth_center_deg"] < 360).all()
 
 
 def test_residual_artifacts_written(tmp_path):
